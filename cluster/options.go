@@ -26,6 +26,7 @@ type Options struct {
 	ReplayStreamId          int32
 	ArchiveOptions          *archive.Options
 	LogFragmentLimit        int
+	MarkFileName            string
 }
 
 func NewOptions() *Options {
@@ -47,5 +48,6 @@ func NewOptions() *Options {
 		ReplayStreamId:          103,
 		ArchiveOptions:          archiveOpts,
 		LogFragmentLimit:        50,
+		MarkFileName:            "cluster-mark-service-0",
 	}
 }

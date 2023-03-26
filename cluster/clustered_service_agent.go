@@ -114,7 +114,11 @@ func NewClusteredServiceAgent(
 		counterFile.MetaDataBuf.Get(),
 	)
 
-	cmf, err := NewClusterMarkFile(options.ClusterDir + "/cluster-mark-service-0.dat")
+	markFileName := options.MarkFileName
+	if markFileName == "" {
+		markFileName = "cluster-mark-service-0"
+	}
+	cmf, err := NewClusterMarkFile(options.ClusterDir + "/" + markFileName + ".dat")
 	if err != nil {
 		return nil, err
 	}
