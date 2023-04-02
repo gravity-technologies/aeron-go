@@ -27,6 +27,8 @@ type Options struct {
 	ArchiveOptions          *archive.Options
 	LogFragmentLimit        int
 	MarkFileName            string
+	IngressStreamId         int32
+	MemberId                int32
 }
 
 func NewOptions() *Options {
@@ -49,5 +51,7 @@ func NewOptions() *Options {
 		ArchiveOptions:          archiveOpts,
 		LogFragmentLimit:        50,
 		MarkFileName:            "cluster-mark-service-0",
+		IngressStreamId:         -1,
+		MemberId:                -1,
 	}
 }

@@ -143,11 +143,19 @@ func NewClusteredServiceAgent(
 	logAdapter.agent = agent
 	proxy.idleStrategy = agent
 
+	ingressStreamId := options.IngressStreamId
+	if ingressStreamId == 0 {
+		ingressStreamId = -1
+	}
+	memberId := options.MemberId
+	if memberId == 0 {
+		memberId = -1
+	}
 	cmf.flyweight.ArchiveStreamId.Set(options.ArchiveOptions.RequestStream)
 	cmf.flyweight.ServiceStreamId.Set(options.ServiceStreamId)
 	cmf.flyweight.ConsensusModuleStreamId.Set(options.ConsensusModuleStreamId)
-	cmf.flyweight.IngressStreamId.Set(-1)
-	cmf.flyweight.MemberId.Set(-1)
+	cmf.flyweight.IngressStreamId.Set(ingressStreamId)
+	cmf.flyweight.MemberId.Set(memberId)
 	cmf.flyweight.ServiceId.Set(options.ServiceId)
 	cmf.flyweight.ClusterId.Set(options.ClusterId)
 
