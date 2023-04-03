@@ -14,6 +14,7 @@ package cluster
 
 import (
 	"fmt"
+	"strconv"
 	"strings"
 	"time"
 
@@ -114,11 +115,7 @@ func NewClusteredServiceAgent(
 		counterFile.MetaDataBuf.Get(),
 	)
 
-	markFileName := options.MarkFileName
-	if markFileName == "" {
-		markFileName = "cluster-mark-service-0"
-	}
-	cmf, err := NewClusterMarkFile(options.ClusterDir + "/" + markFileName + ".dat")
+	cmf, err := NewClusterMarkFile(options.ClusterDir + "/cluster-mark-service-" + strconv.Itoa(int(options.ServiceId)) + ".dat")
 	if err != nil {
 		return nil, err
 	}
@@ -143,19 +140,11 @@ func NewClusteredServiceAgent(
 	logAdapter.agent = agent
 	proxy.idleStrategy = agent
 
-	ingressStreamId := options.IngressStreamId
-	if ingressStreamId == 0 {
-		ingressStreamId = -1
-	}
-	memberId := options.MemberId
-	if memberId == 0 {
-		memberId = -1
-	}
 	cmf.flyweight.ArchiveStreamId.Set(options.ArchiveOptions.RequestStream)
 	cmf.flyweight.ServiceStreamId.Set(options.ServiceStreamId)
 	cmf.flyweight.ConsensusModuleStreamId.Set(options.ConsensusModuleStreamId)
-	cmf.flyweight.IngressStreamId.Set(ingressStreamId)
-	cmf.flyweight.MemberId.Set(memberId)
+	cmf.flyweight.IngressStreamId.Set(-1)
+	cmf.flyweight.MemberId.Set(-1)
 	cmf.flyweight.ServiceId.Set(options.ServiceId)
 	cmf.flyweight.ClusterId.Set(options.ClusterId)
 
@@ -755,7 +744,14 @@ func (agent *ClusteredServiceAgent) CancelTimer(correlationId int64) bool {
 }
 
 func (agent *ClusteredServiceAgent) Offer(buffer *atomic.Buffer, offset, length int32) int64 {
-	return agent.proxy.Offer(buffer, offset, length)
+	if agent.role != Leader {
+		return ClientSessionMockedOffer
+	}
+
+	hdrBuf := agent.sessionMsgHdrBuffer
+	hdrBuf.PutInt64(SBEHeaderLength+8, int64(agent.opts.ServiceId))
+	hdrBuf.PutInt64(SBEHeaderLength+16, agent.clusterTime)
+	return agent.proxy.Offer2(hdrBuf, 0, hdrBuf.Capacity(), buffer, offset, length)
 }
 
 // END CLUSTER IMPLEMENTATION
