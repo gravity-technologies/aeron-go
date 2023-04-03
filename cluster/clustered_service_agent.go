@@ -187,6 +187,7 @@ func (agent *ClusteredServiceAgent) awaitCommitPositionCounter() error {
 }
 
 func (agent *ClusteredServiceAgent) recoverState() error {
+	logger.Debug("REMOVE: entered recoverState")
 	counterId, leadershipTermId := agent.awaitRecoveryCounter()
 	logger.Debugf("found recovery counter - id=%d leadershipTermId=%d logPos=%d clusterTime=%d",
 		counterId, leadershipTermId, agent.logPosition, agent.clusterTime)
@@ -223,6 +224,7 @@ func (agent *ClusteredServiceAgent) recoverState() error {
 }
 
 func (agent *ClusteredServiceAgent) awaitRecoveryCounter() (int32, int64) {
+	logger.Debug("REMOVE: entered awaitRecoveryCounter")
 	for {
 		var leadershipTermId int64
 		id := agent.counters.FindCounter(recoveryStateCounterTypeId, func(keyBuffer *atomic.Buffer) bool {
@@ -235,8 +237,10 @@ func (agent *ClusteredServiceAgent) awaitRecoveryCounter() (int32, int64) {
 			return false
 		})
 		if id != counters.NullCounterId {
+			logger.Debug("REMOVE: exit awaitRecoveryCounter")
 			return id, leadershipTermId
 		}
+		logger.Debug("REMOVE: loop awaitRecoveryCounter")
 		agent.Idle(0)
 	}
 }
