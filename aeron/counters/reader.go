@@ -176,9 +176,12 @@ func (reader *Reader) FindCounter(typeId int32, keyFilter func(keyBuffer *atomic
 		recordStatus := reader.metaData.GetInt32Volatile(metaDataOffset)
 		if recordStatus == RecordUnused {
 			break
-			// https://github.com/real-logic/aeron/blob/14e3c556e62790d05262b91ae9f5a8d3f7f99bb1/aeron-cluster/src/main/java/io/aeron/cluster/service/RecoveryState.java#L148
-		} else if RecordAllocated == recordStatus && reader.GetCounterTypeId(int32(id)) == 204 {
+		} else if RecordAllocated == recordStatus {
+			logger.Warningf("REMOVE: FindCounter RecordAllocated %d", RecordAllocated)
+
 			thisTypeId := reader.metaData.GetInt32(metaDataOffset + 4)
+			logger.Warningf("REMOVE: FindCounter thisTypeId %d %d", thisTypeId, typeId)
+
 			if thisTypeId == typeId {
 				// requires Go 1.17: keyPtr := unsafe.Add(reader.metaData.Ptr(), metaDataOffset+KeyOffset)
 				keyPtr := unsafe.Pointer(uintptr(reader.metaData.Ptr()) + uintptr(metaDataOffset+KeyOffset))
