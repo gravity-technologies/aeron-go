@@ -240,7 +240,7 @@ func (agent *ClusteredServiceAgent) awaitRecoveryCounter() (int32, int64) {
 			logger.Debug("REMOVE: exit awaitRecoveryCounter")
 			return id, leadershipTermId
 		}
-		logger.Debug("REMOVE: loop awaitRecoveryCounter")
+		logger.Debugf("REMOVE: loop awaitRecoveryCounter %v", agent.opts.ServiceId)
 		agent.Idle(0)
 	}
 }
