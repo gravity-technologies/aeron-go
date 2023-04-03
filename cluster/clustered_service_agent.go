@@ -228,6 +228,7 @@ func (agent *ClusteredServiceAgent) awaitRecoveryCounter() (int32, int64) {
 	for {
 		var leadershipTermId int64
 		id := agent.counters.FindCounter(recoveryStateCounterTypeId, func(keyBuffer *atomic.Buffer) bool {
+			logger.Warningf("REMOVE: FIND COUNTER %d %d", keyBuffer.GetInt32(24), agent.opts.ClusterId)
 			if keyBuffer.GetInt32(24) == agent.opts.ClusterId {
 				leadershipTermId = keyBuffer.GetInt64(0)
 				agent.logPosition = keyBuffer.GetInt64(8)
@@ -240,7 +241,7 @@ func (agent *ClusteredServiceAgent) awaitRecoveryCounter() (int32, int64) {
 			logger.Debug("REMOVE: exit awaitRecoveryCounter")
 			return id, leadershipTermId
 		}
-		logger.Warningf("REMOVE: loop awaitRecoveryCounter %d %d", agent.opts.ServiceId, id)
+		logger.Debugf("REMOVE: loop awaitRecoveryCounter %d %d", agent.opts.ServiceId, id)
 		agent.Idle(0)
 	}
 }
