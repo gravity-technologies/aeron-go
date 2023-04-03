@@ -175,7 +175,7 @@ func (reader *Reader) FindCounter(typeId int32, keyFilter func(keyBuffer *atomic
 		metaDataOffset := int32(id) * MetadataLength
 		recordStatus := reader.metaData.GetInt32Volatile(metaDataOffset)
 		if recordStatus == RecordUnused {
-			logger.Warningf("REMOVE: FindCounter RecordUnused typeId %d", typeId)
+			logger.Warningf("REMOVE: FindCounter RecordUnused id %d", id)
 			break
 		} else if RecordAllocated == recordStatus {
 			thisTypeId := reader.metaData.GetInt32(metaDataOffset + 4)
