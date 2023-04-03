@@ -177,12 +177,9 @@ func (reader *Reader) FindCounter(typeId int32, keyFilter func(keyBuffer *atomic
 		if recordStatus == RecordUnused {
 			break
 		} else if RecordAllocated == recordStatus {
-			logger.Warningf("REMOVE: FindCounter RecordAllocated %d", RecordAllocated)
-
 			thisTypeId := reader.metaData.GetInt32(metaDataOffset + 4)
-			logger.Warningf("REMOVE: FindCounter thisTypeId %d %d", thisTypeId, typeId)
-
 			if thisTypeId == typeId {
+				logger.Warningf("REMOVE: FindCounter thisTypeId %d %d", thisTypeId, typeId)
 				// requires Go 1.17: keyPtr := unsafe.Add(reader.metaData.Ptr(), metaDataOffset+KeyOffset)
 				keyPtr := unsafe.Pointer(uintptr(reader.metaData.Ptr()) + uintptr(metaDataOffset+KeyOffset))
 				keyBuf.Wrap(keyPtr, MaxKeyLength)
