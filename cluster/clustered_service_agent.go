@@ -596,7 +596,7 @@ func (agent *ClusteredServiceAgent) takeSnapshot(logPos int64, leadershipTermId 
 	}
 	defer closePublication(pub)
 
-	recordingId, err := agent.awaitRecordingId(pub.SessionID())
+	counterId, recordingId, err := agent.awaitRecordingId(pub.SessionID())
 	if err != nil {
 		return 0, err
 	}
@@ -616,11 +616,28 @@ func (agent *ClusteredServiceAgent) takeSnapshot(logPos int64, leadershipTermId 
 	}
 	agent.checkForClockTick()
 	agent.service.OnTakeSnapshot(pub)
-
+	agent.awaitRecordingComplete(recordingId, pub.Position(), counterId)
 	return recordingId, nil
 }
 
-func (agent *ClusteredServiceAgent) awaitRecordingId(sessionId int32) (int64, error) {
+func (agent *ClusteredServiceAgent) awaitRecordingComplete(recordingId, position int64, counterId int32) {
+	start := time.Now()
+	for time.Since(start) < agent.opts.Timeout {
+		complete := false
+		agent.counters.FindCounter(counterId, func(keyBuffer *atomic.Buffer) bool {
+			if keyBuffer.GetInt64(0) < position {
+				return false
+			}
+			complete = true
+			return true
+		})
+		if complete {
+			return
+		}
+		agent.Idle(0)
+	}
+}
+func (agent *ClusteredServiceAgent) awaitRecordingId(sessionId int32) (int32, int64, error) {
 	start := time.Now()
 	for time.Since(start) < agent.opts.Timeout {
 		recId := int64(NullValue)
@@ -632,11 +649,11 @@ func (agent *ClusteredServiceAgent) awaitRecordingId(sessionId int32) (int64, er
 			return false
 		})
 		if counterId != NullValue {
-			return recId, nil
+			return counterId, recId, nil
 		}
 		agent.Idle(0)
 	}
-	return NullValue, fmt.Errorf("timed out waiting for recordingId for sessionId=%d", sessionId)
+	return NullValue, NullValue, fmt.Errorf("timed out waiting for recordingId for sessionId=%d", sessionId)
 }
 
 func (agent *ClusteredServiceAgent) onServiceTerminationPosition(position int64) {
