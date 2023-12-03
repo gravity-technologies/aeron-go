@@ -603,10 +603,13 @@ func (archive *Archive) StopRecordingByPublication(publication aeron.Publication
 func (archive *Archive) AddRecordedPublication(channel string, stream int32) (*aeron.Publication, error) {
 
 	// This can fail in aeron via log.Fatalf(), not much we can do
-	publication, err := archive.AddExclusivePublication(channel, stream)
+	publication, err := archive.AddPublication(channel, stream)
 	if err != nil {
+		logger.Debugf("TEMP: archive.go Failed add pub ID %d %s", publication.SessionID(), err.Error())
 		return nil, err
 	}
+	logger.Debugf("TEMP: archive.go Added Pub ID %d", publication.SessionID())
+
 	// if !publication.IsOriginal() {
 	// 	return nil, fmt.Errorf("publication already added for channel=%s stream=%d", channel, stream)
 	// }

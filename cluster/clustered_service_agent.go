@@ -594,6 +594,7 @@ func (agent *ClusteredServiceAgent) takeSnapshot(logPos int64, leadershipTermId 
 	if err != nil {
 		return NullValue, err
 	}
+	logger.Debugf("TEMP: CSA Got Pub ID %d", pub.SessionID())
 	defer closePublication(pub)
 
 	recordingId, err := agent.awaitRecordingId(pub.SessionID())
@@ -604,17 +605,22 @@ func (agent *ClusteredServiceAgent) takeSnapshot(logPos int64, leadershipTermId 
 	logger.Debugf("takeSnapshot - got recordingId: %d", recordingId)
 	snapshotTaker := newSnapshotTaker(agent.opts, pub)
 	if err := snapshotTaker.markBegin(logPos, leadershipTermId, agent.timeUnit, agent.opts.AppVersion); err != nil {
+		logger.Debugf("TEMP: CSA MARKED BEGIN")
 		return 0, err
 	}
 	for _, session := range agent.sessions {
 		if err := snapshotTaker.snapshotSession(session); err != nil {
+			logger.Debugf("TEMP: CSA MARKED SESSION %d", session.Id())
 			return 0, err
 		}
 	}
 	if err := snapshotTaker.markEnd(logPos, leadershipTermId, agent.timeUnit, agent.opts.AppVersion); err != nil {
+		logger.Debugf("TEMP: CSA MARKED BEGIN")
 		return 0, err
 	}
 	agent.checkForClockTick()
+	logger.Debugf("TEMP: GOT CLOCK TICK")
+
 	agent.service.OnTakeSnapshot(pub)
 
 	return recordingId, nil
