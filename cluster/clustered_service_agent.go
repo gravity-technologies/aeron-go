@@ -452,7 +452,7 @@ func (agent *ClusteredServiceAgent) closeLog() {
 
 func (agent *ClusteredServiceAgent) disconnectEgress() {
 	for _, session := range agent.sessions {
-		session.Close()
+		session.Disconnect()
 	}
 }
 
