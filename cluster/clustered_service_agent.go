@@ -159,6 +159,10 @@ func (agent *ClusteredServiceAgent) StartAndRun() error {
 	if err := agent.OnStart(); err != nil {
 		return err
 	}
+	// FIXME: not sure if this is the right way to abort.
+	// Java version actually bypass terminate() call, and abort via onClose
+	// and registration close handler.
+	// And whether we should use isServiceActive flag instead of a new flag
 	for agent.isServiceActive && !agent.isAbort.Get() {
 		agent.opts.IdleStrategy.Idle(agent.DoWork())
 	}
