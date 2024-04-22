@@ -282,15 +282,25 @@ func (agent *ClusteredServiceAgent) loadSnapshot(recordingId int64) error {
 	defer closeSubscription(subscription)
 
 	img := agent.awaitImage(int32(replaySessionId), subscription)
-	agent.loadState(img, arch)
+	if err = agent.loadState(img, arch); err != nil {
+		return err
+	}
 	agent.service.OnStart(agent, img)
 	return nil
 }
 
-func (agent *ClusteredServiceAgent) loadState(image aeron.Image, archive *archive.Archive) {
+func (agent *ClusteredServiceAgent) loadState(image aeron.Image, archive *archive.Archive) (err error) {
 	snapshotLoader := newSnapshotLoader(agent, image)
 	for !snapshotLoader.isDone {
 		fragments := snapshotLoader.poll()
+		if fragments == 0 {
+			if _, err = archive.PollForErrorResponse(); err != nil {
+				return err
+			}
+			if image.IsClosed() {
+				return fmt.Errorf("cluster exception - snapshot ended unexpectedly: %v", image)
+			}
+		}
 		agent.opts.IdleStrategy.Idle(fragments)
 	}
 
@@ -300,6 +310,7 @@ func (agent *ClusteredServiceAgent) loadState(image aeron.Image, archive *archiv
 			util.SemanticVersionToString(uint32(snapshotLoader.appVersion))))
 	}
 	agent.timeUnit = snapshotLoader.timeUnit
+	return
 }
 
 func (agent *ClusteredServiceAgent) addSessionFromSnapshot(session *containerClientSession) {
