@@ -304,6 +304,10 @@ func (agent *ClusteredServiceAgent) loadState(image aeron.Image, archive *archiv
 		agent.opts.IdleStrategy.Idle(fragments)
 	}
 
+	if snapshotLoader.err != nil {
+		return snapshotLoader.err
+	}
+
 	if util.SemanticVersionMajor(uint32(agent.opts.AppVersion)) != util.SemanticVersionMajor(uint32(snapshotLoader.appVersion)) {
 		panic(fmt.Errorf("incompatible app version: %v snapshot=%v",
 			util.SemanticVersionToString(uint32(agent.opts.AppVersion)),

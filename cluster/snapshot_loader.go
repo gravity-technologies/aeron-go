@@ -75,10 +75,10 @@ func (loader *snapshotLoader) onFragment(
 			loader.err = err
 			loader.isDone = true
 		} else if marker.TypeId != snapshotTypeId {
-			panic(fmt.Sprintf("unexpected snapshot type: %d", marker.TypeId))
+			loader.err = fmt.Errorf("unexpected snapshot type: %d", marker.TypeId)
+			loader.isDone = true
 		}
 		switch marker.Mark {
-
 		case codecs.SnapshotMark.BEGIN:
 			if loader.inSnapshot {
 				loader.err = fmt.Errorf("already in snapshot, pos=%d", header.Position())
