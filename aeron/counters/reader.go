@@ -169,6 +169,37 @@ func (reader *Reader) ScanForType(typeId int32, callback func(counterId int32, k
 	}
 }
 
+func (reader *Reader) FindCounterWithArchive(typeId int32, archiveId int64, keyFilter func(keyBuffer *atomic.Buffer) bool) int32 {
+	var keyBuf atomic.Buffer
+	for id := 0; id < reader.maxCounterID; id++ {
+		metaDataOffset := int32(id) * MetadataLength
+		recordStatus := reader.metaData.GetInt32Volatile(metaDataOffset)
+		if recordStatus == RecordUnused {
+			break
+		} else if RecordAllocated == recordStatus {
+			thisTypeId := reader.metaData.GetInt32(metaDataOffset + 4)
+			if thisTypeId == typeId {
+				// requires Go 1.17: keyPtr := unsafe.Add(reader.metaData.Ptr(), metaDataOffset+KeyOffset)
+				keyPtr := unsafe.Pointer(uintptr(reader.metaData.Ptr()) + uintptr(metaDataOffset+KeyOffset))
+				keyBuf.Wrap(keyPtr, MaxKeyLength)
+
+				if keyFilter == nil || keyFilter(&keyBuf) {
+					sessionIdOffset := 0 + util.SizeOfInt64
+					sourceIdentityLengthOffset := sessionIdOffset + util.SizeOfInt32
+					sourceIdentityOffset := sourceIdentityLengthOffset + util.SizeOfInt32
+					sourceIdentityLength := keyBuf.GetInt32(metaDataOffset + sourceIdentityLengthOffset)
+					archiveIdOffset := metaDataOffset + sourceIdentityOffset + sourceIdentityLength
+					if archiveId == int64(-1) || 
+						keyBuf.GetInt64(archiveIdOffset) == archiveId {
+						return int32(id)
+					}
+				}
+			}
+		}
+	}
+	return NullCounterId
+}
+
 func (reader *Reader) FindCounter(typeId int32, keyFilter func(keyBuffer *atomic.Buffer) bool) int32 {
 	var keyBuf atomic.Buffer
 	for id := 0; id < reader.maxCounterID; id++ {

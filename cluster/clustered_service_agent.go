@@ -685,7 +685,7 @@ func (agent *ClusteredServiceAgent) takeSnapshot(logPos int64, leadershipTermId 
 	}
 	defer closePublication(pub)
 
-	recordingId, counterId, err := agent.awaitRecordingCounterAndId(pub.SessionID())
+	recordingId, counterId, err := agent.awaitRecordingCounterAndIdWithArchive(pub.SessionID(), arch)
 	if err != nil {
 		return 0, err
 	}
@@ -703,7 +703,9 @@ func (agent *ClusteredServiceAgent) takeSnapshot(logPos int64, leadershipTermId 
 	if err := snapshotTaker.markEnd(logPos, leadershipTermId, agent.timeUnit, agent.opts.AppVersion); err != nil {
 		return 0, err
 	}
-	agent.checkForClockTick()
+	if !agent.checkForClockTick() {
+		return 0, fmt.Errorf("snapshot operation aborted")
+	}
 	if _, err := arch.PollForErrorResponse(); err != nil {
 		return 0, err
 	}
@@ -725,6 +727,27 @@ func (agent *ClusteredServiceAgent) awaitRecordingCounterAndId(sessionId int32) 
 			}
 			return false
 		})
+		if counterId != NullValue {
+			return recId, counterId, nil
+		}
+		agent.Idle(0)
+	}
+}
+
+func (agent *ClusteredServiceAgent) awaitRecordingCounterAndIdWithArchive(sessionId int32, arch *archive.Archive) (int64, int32, error) {
+	archiveId := arch.Aeron().ClientID()
+	for {
+		recId := int64(NullValue)
+		counterId := agent.counters.FindCounterWithArchive(recordingPosCounterTypeId, archiveId, func(keyBuffer *atomic.Buffer) bool {
+			if keyBuffer.GetInt32(8) == sessionId {
+				recId = keyBuffer.GetInt64(0)
+				return true
+			}
+			return false
+		})
+		if _, err := arch.PollForErrorResponse(); err != nil {
+			return recId, counters.NullCounterId, err
+		}
 		if counterId != NullValue {
 			return recId, counterId, nil
 		}
