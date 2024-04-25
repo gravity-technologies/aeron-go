@@ -212,16 +212,17 @@ func (agent *ClusteredServiceAgent) recoverState() error {
 		}
 	}
 
-	ackId := agent.getAndIncrementNextAckId()
-	for !agent.consensusModuleProxy.ack(
-		agent.logPosition,
-		agent.clusterTime,
-		ackId,
-		agent.aeronClient.ClientID(),
-		agent.opts.ServiceId,
-	) {
-		agent.Idle(0)
-	}
+	agent.consensusModuleProxy.ackOld(agent.logPosition, agent.clusterTime, agent.getAndIncrementNextAckId(), agent.aeronClient.ClientID(), agent.opts.ServiceId)
+	// ackId := agent.getAndIncrementNextAckId()
+	// for !agent.consensusModuleProxy.ack(
+	// 	agent.logPosition,
+	// 	agent.clusterTime,
+	// 	ackId,
+	// 	agent.aeronClient.ClientID(),
+	// 	agent.opts.ServiceId,
+	// ) {
+	// 	agent.Idle(0)
+	// }
 	return nil
 }
 
@@ -318,33 +319,34 @@ func (agent *ClusteredServiceAgent) pollServiceAdapter() {
 		agent.terminate()
 	}
 
-	if agent.requestedAckPosition != NullPosition && agent.logPosition >= agent.requestedAckPosition {
-		if agent.logPosition > agent.requestedAckPosition {
-			logger.Errorf("invalid ack request: logPos=%d > requestedAckPos=%d", agent.logPosition, agent.requestedAckPosition)
-		}
-		ackId := agent.getAndIncrementNextAckId()
-		for !agent.consensusModuleProxy.ack(agent.logPosition, agent.clusterTime, ackId, NullValue, agent.opts.ServiceId) {
-			agent.Idle(0)
-		}
-		agent.requestedAckPosition = NullPosition
-	}
+	// if agent.requestedAckPosition != NullPosition && agent.logPosition >= agent.requestedAckPosition {
+	// 	if agent.logPosition > agent.requestedAckPosition {
+	// 		logger.Errorf("invalid ack request: logPos=%d > requestedAckPos=%d", agent.logPosition, agent.requestedAckPosition)
+	// 	}
+	// 	ackId := agent.getAndIncrementNextAckId()
+	// 	for !agent.consensusModuleProxy.ack(agent.logPosition, agent.clusterTime, ackId, NullValue, agent.opts.ServiceId) {
+	// 		agent.Idle(0)
+	// 	}
+	// 	agent.requestedAckPosition = NullPosition
+	// }
 }
 
 func (agent *ClusteredServiceAgent) terminate() {
 	agent.isServiceActive = false
 	agent.service.OnTerminate(agent)
-	attempts := 5
-	ackId := agent.getAndIncrementNextAckId()
-	for attempts > 0 && !agent.consensusModuleProxy.ack(
-		agent.logPosition,
-		agent.clusterTime,
-		ackId,
-		NullValue,
-		agent.opts.ServiceId,
-	) {
-		attempts--
-		agent.Idle(0)
-	}
+	agent.consensusModuleProxy.ackOld(agent.logPosition, agent.clusterTime, agent.getAndIncrementNextAckId(), NullValue, agent.opts.ServiceId)
+	// attempts := 5
+	// ackId := agent.getAndIncrementNextAckId()
+	// for attempts > 0 && !agent.consensusModuleProxy.ack(
+	// 	agent.logPosition,
+	// 	agent.clusterTime,
+	// 	ackId,
+	// 	NullValue,
+	// 	agent.opts.ServiceId,
+	// ) {
+	// 	attempts--
+	// 	agent.Idle(0)
+	// }
 	agent.terminationPosition = NullPosition
 }
 
@@ -417,16 +419,17 @@ func (agent *ClusteredServiceAgent) joinActiveLog(event *activeLogEvent) error {
 	agent.logAdapter.image = img
 	agent.logAdapter.maxLogPosition = event.maxLogPosition
 
-	ackId := agent.getAndIncrementNextAckId()
-	for agent.consensusModuleProxy.ack(
-		event.logPosition,
-		agent.clusterTime,
-		ackId,
-		NullValue,
-		agent.opts.ServiceId,
-	) {
-		agent.Idle(0)
-	}
+	agent.consensusModuleProxy.ackOld(agent.logPosition, agent.clusterTime, agent.getAndIncrementNextAckId(), NullValue, agent.opts.ServiceId)
+	// ackId := agent.getAndIncrementNextAckId()
+	// for !agent.consensusModuleProxy.ack(
+	// 	event.logPosition,
+	// 	agent.clusterTime,
+	// 	ackId,
+	// 	NullValue,
+	// 	agent.opts.ServiceId,
+	// ) {
+	// 	agent.Idle(0)
+	// }
 	agent.memberId = event.memberId
 	agent.markFile.flyweight.MemberId.Set(agent.memberId)
 
@@ -583,12 +586,14 @@ func (agent *ClusteredServiceAgent) executeAction(
 		recordingId, err := agent.takeSnapshot(logPosition, leadershipTermId)
 		if err != nil {
 			logger.Errorf("take snapshot failed: ", err)
+		} else {
+			agent.consensusModuleProxy.ackOld(logPosition, agent.clusterTime, agent.getAndIncrementNextAckId(), recordingId, agent.opts.ServiceId)
 		}
 
-		ackId := agent.getAndIncrementNextAckId()
-		for agent.consensusModuleProxy.ack(logPosition, agent.clusterTime, ackId, recordingId, agent.opts.ServiceId) {
-			agent.Idle(0)
-		}
+		// ackId := agent.getAndIncrementNextAckId()
+		// for !agent.consensusModuleProxy.ack(logPosition, agent.clusterTime, ackId, recordingId, agent.opts.ServiceId) {
+		// 	agent.Idle(0)
+		// }
 	}
 }
 
@@ -782,8 +787,8 @@ func (agent *ClusteredServiceAgent) Offer(buffer *atomic.Buffer, offset, length 
 	return agent.consensusModuleProxy.Offer2(hdrBuf, 0, hdrBuf.Capacity(), buffer, offset, length)
 }
 
-func (agent *ClusteredServiceAgent) OnRequestServiceAck(logPosition int64) {
-	agent.requestedAckPosition = logPosition
-}
+// func (agent *ClusteredServiceAgent) OnRequestServiceAck(logPosition int64) {
+// 	agent.requestedAckPosition = logPosition
+// }
 
 // END CLUSTER IMPLEMENTATION

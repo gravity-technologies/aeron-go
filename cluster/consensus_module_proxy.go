@@ -5,6 +5,7 @@ import (
 
 	"github.com/lirm/aeron-go/aeron"
 	"github.com/lirm/aeron-go/aeron/atomic"
+	"github.com/lirm/aeron-go/aeron/idlestrategy"
 	"github.com/lirm/aeron-go/cluster/codecs"
 )
 
@@ -16,6 +17,7 @@ const (
 // Proxy class for encapsulating encoding and sending of control protocol messages to a cluster
 type consensusModuleProxy struct {
 	marshaller    *codecs.SbeGoMarshaller // currently shared as we're not reentrant (but could be here)
+	idleStrategy  idlestrategy.Idler
 	rangeChecking bool
 	publication   *aeron.Publication
 	buffer        *atomic.Buffer
@@ -27,6 +29,7 @@ func newConsensusModuleProxy(
 ) *consensusModuleProxy {
 	return &consensusModuleProxy{
 		marshaller:    codecs.NewSbeGoMarshaller(),
+		idleStrategy:  options.IdleStrategy,
 		rangeChecking: options.RangeChecking,
 		publication:   publication,
 		buffer:        atomic.MakeBuffer(make([]byte, 500)),
@@ -35,6 +38,30 @@ func newConsensusModuleProxy(
 
 // From here we have all the functions that create a data packet and send it on the
 // publication. Responses will be processed on the control
+func (proxy *consensusModuleProxy) ackOld(
+	logPosition int64,
+	timestamp int64,
+	ackID int64,
+	relevantID int64,
+	serviceID int32,
+) bool {
+	// Create a packet and send it
+	bytes, err := codecs.ServiceAckRequestPacket(
+		proxy.marshaller,
+		proxy.rangeChecking,
+		logPosition,
+		timestamp,
+		ackID,
+		relevantID,
+		serviceID,
+	)
+	if err != nil {
+		panic(err)
+	}
+
+	proxy.send(bytes)
+	return true
+}
 
 // ConnectRequest packet and send
 func (proxy *consensusModuleProxy) ack(
@@ -121,4 +148,11 @@ func (proxy *consensusModuleProxy) Offer2(
 		checkResult(result)
 	}
 	return result
+}
+
+func (proxy *consensusModuleProxy) send(payload []byte) {
+	buffer := atomic.MakeBuffer(payload)
+	for proxy.offer(buffer, 0, buffer.Capacity()) < 0 {
+		proxy.idleStrategy.Idle(0)
+	}
 }
