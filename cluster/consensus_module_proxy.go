@@ -5,6 +5,7 @@ import (
 
 	"github.com/lirm/aeron-go/aeron"
 	"github.com/lirm/aeron-go/aeron/atomic"
+	"github.com/lirm/aeron-go/aeron/logbuffer"
 	"github.com/lirm/aeron-go/cluster/codecs"
 )
 
@@ -19,6 +20,7 @@ type consensusModuleProxy struct {
 	rangeChecking bool
 	publication   *aeron.Publication
 	buffer        *atomic.Buffer
+	bufferClaim   *logbuffer.Claim
 }
 
 func newConsensusModuleProxy(
@@ -57,9 +59,17 @@ func (proxy *consensusModuleProxy) ack(
 	if err != nil {
 		panic(err)
 	}
-
 	buffer := atomic.MakeBuffer(bytes)
-	return proxy.offer(buffer, 0, buffer.Capacity()) >= 0
+	proxy.bufferClaim.Wrap(buffer, 0, buffer.Capacity())
+	// TODO: FIXME:
+	length := int32(8 + 36)
+	result := proxy.tryClaim(length)
+	if result <= 0 {
+		checkResult(result)
+		return false
+	}
+	proxy.bufferClaim.Commit()
+	return true
 }
 
 func (proxy *consensusModuleProxy) closeSessionRequest(
@@ -75,7 +85,18 @@ func (proxy *consensusModuleProxy) closeSessionRequest(
 		panic(err)
 	}
 	buffer := atomic.MakeBuffer(bytes)
-	return proxy.offer(buffer, 0, buffer.Capacity()) >= 0
+	proxy.bufferClaim.Wrap(buffer, 0, buffer.Capacity())
+	// TODO: FIXME:
+	length := int32(8 + 8)
+	result := proxy.tryClaim(length)
+	if result <= 0 {
+		checkResult(result)
+		return false
+	}
+	proxy.bufferClaim.Commit()
+	return true
+	// buffer := atomic.MakeBuffer(bytes)
+	// return proxy.offer(buffer, 0, buffer.Capacity()) >= 0
 }
 
 func (proxy *consensusModuleProxy) scheduleTimer(correlationId int64, deadline int64) bool {
@@ -103,6 +124,11 @@ func (proxy *consensusModuleProxy) initBuffer(templateId uint16, blockLength uin
 func (proxy *consensusModuleProxy) offer(buffer *atomic.Buffer, offset, length int32) int64 {
 	result := proxy.publication.Offer(buffer, offset, length, nil)
 	checkResult(result)
+	return result
+}
+
+func (proxy *consensusModuleProxy) tryClaim(length int32) int64 {
+	result := proxy.publication.TryClaim(length, proxy.bufferClaim)
 	return result
 }
 
