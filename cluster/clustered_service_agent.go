@@ -212,13 +212,17 @@ func (agent *ClusteredServiceAgent) recoverState() error {
 		}
 	}
 
-	agent.proxy.serviceAckRequest(
-		agent.logPosition,
-		agent.clusterTime,
-		agent.getAndIncrementNextAckId(),
-		agent.aeronClient.ClientID(),
-		agent.opts.ServiceId,
-	)
+	ackID := agent.getAndIncrementNextAckId()
+	for !agent.proxy.ack(agent.logPosition, agent.clusterTime, ackID, agent.aeronClient.ClientID(), agent.opts.ServiceId) {
+		agent.opts.IdleStrategy.Idle(0)
+	}
+	// agent.proxy.serviceAckRequest(
+	// 	agent.logPosition,
+	// 	agent.clusterTime,
+	// 	agent.getAndIncrementNextAckId(),
+	// 	agent.aeronClient.ClientID(),
+	// 	agent.opts.ServiceId,
+	// )
 	return nil
 }
 
@@ -319,13 +323,18 @@ func (agent *ClusteredServiceAgent) pollServiceAdapter() {
 func (agent *ClusteredServiceAgent) terminate() {
 	agent.isServiceActive = false
 	agent.service.OnTerminate(agent)
-	agent.proxy.serviceAckRequest(
-		agent.logPosition,
-		agent.clusterTime,
-		agent.getAndIncrementNextAckId(),
-		NullValue,
-		agent.opts.ServiceId,
-	)
+
+	ackID := agent.getAndIncrementNextAckId()
+	for !agent.proxy.ack(agent.logPosition, agent.clusterTime, ackID, NullValue, agent.opts.ServiceId) {
+		agent.opts.IdleStrategy.Idle(0)
+	}
+	// agent.proxy.serviceAckRequest(
+	// 	agent.logPosition,
+	// 	agent.clusterTime,
+	// 	agent.getAndIncrementNextAckId(),
+	// 	NullValue,
+	// 	agent.opts.ServiceId,
+	// )
 	agent.terminationPosition = NullPosition
 }
 
@@ -398,13 +407,17 @@ func (agent *ClusteredServiceAgent) joinActiveLog(event *activeLogEvent) error {
 	agent.logAdapter.image = img
 	agent.logAdapter.maxLogPosition = event.maxLogPosition
 
-	agent.proxy.serviceAckRequest(
-		event.logPosition,
-		agent.clusterTime,
-		agent.getAndIncrementNextAckId(),
-		NullValue,
-		agent.opts.ServiceId,
-	)
+	ackID := agent.getAndIncrementNextAckId()
+	for !agent.proxy.ack(event.logPosition, agent.clusterTime, ackID, NullValue, agent.opts.ServiceId) {
+		agent.opts.IdleStrategy.Idle(0)
+	}
+	// agent.proxy.serviceAckRequest(
+	// 	event.logPosition,
+	// 	agent.clusterTime,
+	// 	agent.getAndIncrementNextAckId(),
+	// 	NullValue,
+	// 	agent.opts.ServiceId,
+	// )
 
 	agent.memberId = event.memberId
 	agent.markFile.flyweight.MemberId.Set(agent.memberId)
@@ -555,7 +568,11 @@ func (agent *ClusteredServiceAgent) onServiceAction(
 		if err != nil {
 			logger.Errorf("take snapshot failed: ", err)
 		} else {
-			agent.proxy.serviceAckRequest(logPos, timestamp, agent.getAndIncrementNextAckId(), recordingId, agent.opts.ServiceId)
+			ackID := agent.getAndIncrementNextAckId()
+			for !agent.proxy.ack(logPos, timestamp, ackID, recordingId, agent.opts.ServiceId) {
+				agent.opts.IdleStrategy.Idle(0)
+			}
+			// agent.proxy.serviceAckRequest(logPos, timestamp, agent.getAndIncrementNextAckId(), recordingId, agent.opts.ServiceId)
 		}
 	}
 }

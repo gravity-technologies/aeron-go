@@ -37,6 +37,29 @@ func newConsensusModuleProxy(
 
 // From here we have all the functions that create a data packet and send it on the
 // publication. Responses will be processed on the control
+func (proxy *consensusModuleProxy) ack(
+	logPosition int64,
+	timestamp int64,
+	ackID int64,
+	relevantID int64,
+	serviceID int32,
+) bool {
+	// Create a packet and send it
+	bytes, err := codecs.ServiceAckRequestPacket(
+		proxy.marshaller,
+		proxy.rangeChecking,
+		logPosition,
+		timestamp,
+		ackID,
+		relevantID,
+		serviceID,
+	)
+	if err != nil {
+		panic(err)
+	}
+	buffer := atomic.MakeBuffer(bytes)
+	return proxy.offer(buffer, 0, buffer.Capacity()) >= 0
+}
 
 // ConnectRequest packet and send
 func (proxy *consensusModuleProxy) serviceAckRequest(
