@@ -318,16 +318,16 @@ func (agent *ClusteredServiceAgent) pollServiceAdapter() {
 		agent.terminate()
 	}
 
-	if agent.requestedAckPosition != NullPosition && agent.logPosition >= agent.requestedAckPosition {
-		if agent.logPosition > agent.requestedAckPosition {
-			logger.Errorf("invalid ack request: logPos=%d > requestedAckPos=%d", agent.logPosition, agent.requestedAckPosition)
-		}
-		ackId := agent.getAndIncrementNextAckId()
-		for !agent.consensusModuleProxy.ack(agent.logPosition, agent.clusterTime, ackId, NullValue, agent.opts.ServiceId) {
-			agent.Idle(0)
-		}
-		agent.requestedAckPosition = NullPosition
-	}
+	// if agent.requestedAckPosition != NullPosition && agent.logPosition >= agent.requestedAckPosition {
+	// 	if agent.logPosition > agent.requestedAckPosition {
+	// 		logger.Errorf("invalid ack request: logPos=%d > requestedAckPos=%d", agent.logPosition, agent.requestedAckPosition)
+	// 	}
+	// 	ackId := agent.getAndIncrementNextAckId()
+	// 	for !agent.consensusModuleProxy.ack(agent.logPosition, agent.clusterTime, ackId, NullValue, agent.opts.ServiceId) {
+	// 		agent.Idle(0)
+	// 	}
+	// 	agent.requestedAckPosition = NullPosition
+	// }
 }
 
 func (agent *ClusteredServiceAgent) terminate() {
@@ -418,7 +418,7 @@ func (agent *ClusteredServiceAgent) joinActiveLog(event *activeLogEvent) error {
 	agent.logAdapter.maxLogPosition = event.maxLogPosition
 
 	ackId := agent.getAndIncrementNextAckId()
-	for agent.consensusModuleProxy.ack(
+	for !agent.consensusModuleProxy.ack(
 		event.logPosition,
 		agent.clusterTime,
 		ackId,
@@ -583,12 +583,13 @@ func (agent *ClusteredServiceAgent) executeAction(
 		recordingId, err := agent.takeSnapshot(logPosition, leadershipTermId)
 		if err != nil {
 			logger.Errorf("take snapshot failed: ", err)
+		} else {
+			ackId := agent.getAndIncrementNextAckId()
+			for !agent.consensusModuleProxy.ack(logPosition, agent.clusterTime, ackId, recordingId, agent.opts.ServiceId) {
+				agent.Idle(0)
+			}
 		}
 
-		ackId := agent.getAndIncrementNextAckId()
-		for agent.consensusModuleProxy.ack(logPosition, agent.clusterTime, ackId, recordingId, agent.opts.ServiceId) {
-			agent.Idle(0)
-		}
 	}
 }
 
