@@ -137,6 +137,7 @@ func NewClusteredServiceAgent(
 		terminationPosition:  NullPosition,
 		sessions:             map[int64]ClientSession{},
 		sessionMsgHdrBuffer:  codecs.MakeClusterMessageBuffer(SessionMessageHeaderTemplateId, SessionMessageHdrBlockLength),
+		requestedAckPosition: NullPosition,
 	}
 	serviceAdapter.agent = agent
 	logAdapter.agent = agent
@@ -367,6 +368,7 @@ func (agent *ClusteredServiceAgent) pollServiceAdapter() {
 	if agent.requestedAckPosition != NullPosition && agent.logPosition >= agent.requestedAckPosition {
 		if agent.logPosition > agent.requestedAckPosition {
 			logger.Errorf("invalid ack request: logPos=%d > requestedAckPos=%d", agent.logPosition, agent.requestedAckPosition)
+			return
 		}
 		ackId := agent.getAndIncrementNextAckId()
 		logger.Infof("ack :: pollServiceAdapter :: start :: ackId=%d, clusterTime=%d, clientId=%d, serviceId=%d", ackId, agent.clusterTime, agent.aeronClient.ClientID(), agent.opts.ServiceId)
