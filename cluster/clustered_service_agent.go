@@ -40,7 +40,7 @@ const (
 	recoveryStateCounterTypeId = 204
 )
 
-type LifeCycleCallback int32
+type LifeCycleCallback int8
 
 const (
 	LIFECYCLE_CALLBACK_NONE = iota
