@@ -219,9 +219,11 @@ func (agent *ClusteredServiceAgent) recoverState() error {
 	if leadershipTermId != NullValue {
 		snapshotRecId, err := getSnapshotRecordingID(agent.counters, recoveryCounterId, agent.opts.ServiceId)
 		if err != nil {
+			agent.activeLifecycleCallback = LIFECYCLE_CALLBACK_NONE
 			return err
 		}
 		if err := agent.loadSnapshot(snapshotRecId); err != nil {
+			agent.activeLifecycleCallback = LIFECYCLE_CALLBACK_NONE
 			return err
 		}
 	} else {
