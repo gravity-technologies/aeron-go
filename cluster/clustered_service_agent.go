@@ -396,7 +396,7 @@ func (agent *ClusteredServiceAgent) pollServiceAdapter() {
 	}
 }
 
-func (agent *ClusteredServiceAgent) CloseResources() {
+func (agent *ClusteredServiceAgent) CloseResource() {
 	agent.closeLog()
 	if !agent.aeronClient.IsClosed() {
 		if err := agent.serviceAdapter.subscription.Close(); err != nil {
