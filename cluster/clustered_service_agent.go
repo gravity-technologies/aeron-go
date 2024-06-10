@@ -408,7 +408,9 @@ func (agent *ClusteredServiceAgent) CloseResource() {
 		agent.disconnectEgress()
 	}
 	agent.markFile.UpdateActivityTimestamp(NullValue)
-	agent.markFile.SignalReady()
+	if err := agent.markFile.file.Close(); err != nil {
+		logger.Error("failed to close markFile: %v", err)
+	}
 }
 
 func (agent *ClusteredServiceAgent) terminate() {
