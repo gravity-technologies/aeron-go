@@ -396,6 +396,20 @@ func (agent *ClusteredServiceAgent) pollServiceAdapter() {
 	}
 }
 
+func (agent *ClusteredServiceAgent) CloseResources() {
+	agent.closeLog()
+	if !agent.aeronClient.IsClosed() {
+		if err := agent.serviceAdapter.subscription.Close(); err != nil {
+			logger.Error("failed to close service adapter subscription: %v", err)
+		}
+		if err := agent.consensusModuleProxy.publication.Close(); err != nil  {
+			logger.Error("failed to close consensusModuleProxy.publication: %v", err)
+		}
+	}
+	agent.markFile.UpdateActivityTimestamp(NullValue)
+	agent.markFile.SignalReady()
+}
+
 func (agent *ClusteredServiceAgent) terminate() {
 	agent.isServiceActive = false
 	agent.activeLifecycleCallback = LIFECYCLE_CALLBACK_ON_TERMINATE
