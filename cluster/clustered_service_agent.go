@@ -394,6 +394,9 @@ func (agent *ClusteredServiceAgent) pollServiceAdapter() {
 	}
 }
 
+// We need to call this on end of each StartAndRun() like how java does it with finally
+// Either we defer agent.OnClose() or trap signal and execute it
+// https://github.com/real-logic/aeron/blob/master/aeron-samples/src/main/java/io/aeron/samples/stress/StressMdcClient.java#L292
 func (agent *ClusteredServiceAgent) OnClose() {
 	if agent.isServiceActive {
 		agent.isServiceActive = false
