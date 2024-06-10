@@ -397,7 +397,9 @@ func (agent *ClusteredServiceAgent) pollServiceAdapter() {
 }
 
 func (agent *ClusteredServiceAgent) CloseResource() {
-	agent.closeLog()
+	if err := agent.logAdapter.Close(); err != nil {
+		logger.Errorf("error closing log image: %v", err)
+	}
 	if !agent.aeronClient.IsClosed() {
 		if err := agent.serviceAdapter.subscription.Close(); err != nil {
 			logger.Error("failed to close service adapter subscription: %v", err)
@@ -405,6 +407,7 @@ func (agent *ClusteredServiceAgent) CloseResource() {
 		if err := agent.consensusModuleProxy.publication.Close(); err != nil  {
 			logger.Error("failed to close consensusModuleProxy.publication: %v", err)
 		}
+		agent.disconnectEgress()
 	}
 	agent.markFile.UpdateActivityTimestamp(NullValue)
 	agent.markFile.SignalReady()
