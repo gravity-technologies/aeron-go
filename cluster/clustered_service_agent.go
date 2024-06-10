@@ -71,7 +71,6 @@ type ClusteredServiceAgent struct {
 	nextAckId                int64
 	terminationPosition      int64
 	isServiceActive          bool
-	isAbort                  atomic.Bool
 	role                     Role
 	service                  ClusteredService
 	sessions                 map[int64]ClientSession
@@ -173,11 +172,7 @@ func (agent *ClusteredServiceAgent) StartAndRun() error {
 	if err := agent.OnStart(); err != nil {
 		return err
 	}
-	// FIXME: not sure if this is the right way to abort.
-	// Java version actually bypass terminate() call, and abort via onClose
-	// and registration close handler.
-	// And whether we should use isServiceActive flag instead of a new flag
-	for agent.isServiceActive && !agent.isAbort.Get() {
+	for agent.isServiceActive {
 		agent.opts.IdleStrategy.Idle(agent.DoWork())
 	}
 	return nil
@@ -342,17 +337,20 @@ func (agent *ClusteredServiceAgent) addSessionFromSnapshot(session *containerCli
 }
 
 func (agent *ClusteredServiceAgent) checkForClockTick() bool {
-	if agent.isAbort.Get() || agent.aeronClient.IsClosed() {
+	if agent.aeronClient.IsClosed() {
 		logger.Error("agent termination exception - unexpected Aeron close")
-		agent.isAbort.Set(true)
 		return false
 	}
 	nowMs := time.Now().UnixMilli()
 	if agent.cachedTimeMs != nowMs {
 		agent.cachedTimeMs = nowMs
 
+		if agent.aeronClient.IsClosed() {
+			logger.Error("agent termination exception - unexpected Aeron close")
+			return false
+		}
+
 		if agent.commitPosition != nil && agent.commitPosition.IsClosed() {
-			agent.isAbort.Set(true)
 			logger.Error("cluster termination exception - commit-pos counter unexpectedly closed, terminating")
 			return false
 		}
