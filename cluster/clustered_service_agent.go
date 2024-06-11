@@ -176,14 +176,15 @@ func NewClusteredServiceAgent(
 func (agent *ClusteredServiceAgent) StartAndRunWithGracefulShutdown() error {
 	agent.signalChan = make(chan os.Signal, 1)
 	signal.Notify(agent.signalChan, syscall.SIGINT, syscall.SIGTERM)
-	defer close(agent.signalChan)
-	defer signal.Stop(agent.signalChan)
+	defer agent.OnClose()
+	// defer close(agent.signalChan)
+	// defer signal.Stop(agent.signalChan)
 	go func() {
 		for {
 			select {
 			case <-agent.signalChan:
-				signal.Stop(agent.signalChan)
-				close(agent.signalChan)
+				// signal.Stop(agent.signalChan)
+				// close(agent.signalChan)
 				agent.OnClose()
 				return
 			default:
@@ -443,6 +444,11 @@ func (agent *ClusteredServiceAgent) OnClose() {
 	agent.markFile.UpdateActivityTimestamp(NullValue)
 	if err := agent.markFile.file.Close(); err != nil {
 		logger.Errorf("failed to close markFile: %v", err)
+	}
+	if !agent.aeronClient.IsClosed() {
+		if err := agent.aeronClient.Close(); err != nil {
+			logger.Errorf("failed to close aeronClient: %v", err)
+		}
 	}
 }
 
