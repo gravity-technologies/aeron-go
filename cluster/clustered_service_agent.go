@@ -16,7 +16,6 @@ import (
 	"fmt"
 	"os"
 	"os/signal"
-	"runtime"
 	"strconv"
 	"strings"
 	"syscall"
@@ -177,21 +176,12 @@ func (agent *ClusteredServiceAgent) StartAndRunWithGracefulShutdown() error {
 	agent.signalChan = make(chan os.Signal, 1)
 	signal.Notify(agent.signalChan, syscall.SIGINT, syscall.SIGTERM)
 	defer agent.OnClose()
-	// defer close(agent.signalChan)
-	// defer signal.Stop(agent.signalChan)
+
 	go func() {
-		for {
-			select {
-			case <-agent.signalChan:
-				// signal.Stop(agent.signalChan)
-				// close(agent.signalChan)
-				agent.OnClose()
-				return
-			default:
-				runtime.Gosched()
-			}
-		}
+		<-agent.signalChan
+		agent.OnClose()
 	}()
+
 	return agent.StartAndRun()
 }
 
