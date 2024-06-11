@@ -14,8 +14,11 @@ package cluster
 
 import (
 	"fmt"
+	"os"
+	"os/signal"
 	"strconv"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/lirm/aeron-go/aeron"
@@ -71,7 +74,6 @@ type ClusteredServiceAgent struct {
 	nextAckId                int64
 	terminationPosition      int64
 	isServiceActive          bool
-	isAbort                  atomic.Bool
 	role                     Role
 	service                  ClusteredService
 	sessions                 map[int64]ClientSession
@@ -79,6 +81,7 @@ type ClusteredServiceAgent struct {
 	sessionMsgHdrBuffer      *atomic.Buffer
 	requestedAckPosition     int64
 	activeLifecycleCallback  LifeCycleCallback
+	signalChan               chan os.Signal
 }
 
 func NewClusteredServiceAgent(
@@ -169,15 +172,24 @@ func NewClusteredServiceAgent(
 	return agent, nil
 }
 
+func (agent *ClusteredServiceAgent) StartAndRunWithGracefulShutdown() error {
+	agent.signalChan = make(chan os.Signal, 1)
+	signal.Notify(agent.signalChan, syscall.SIGINT, syscall.SIGTERM)
+	defer agent.OnClose()
+
+	go func() {
+		<-agent.signalChan
+		agent.OnClose()
+	}()
+
+	return agent.StartAndRun()
+}
+
 func (agent *ClusteredServiceAgent) StartAndRun() error {
 	if err := agent.OnStart(); err != nil {
 		return err
 	}
-	// FIXME: not sure if this is the right way to abort.
-	// Java version actually bypass terminate() call, and abort via onClose
-	// and registration close handler.
-	// And whether we should use isServiceActive flag instead of a new flag
-	for agent.isServiceActive && !agent.isAbort.Get() {
+	for agent.isServiceActive {
 		agent.opts.IdleStrategy.Idle(agent.DoWork())
 	}
 	return nil
@@ -342,17 +354,20 @@ func (agent *ClusteredServiceAgent) addSessionFromSnapshot(session *containerCli
 }
 
 func (agent *ClusteredServiceAgent) checkForClockTick() bool {
-	if agent.isAbort.Get() || agent.aeronClient.IsClosed() {
+	if agent.aeronClient.IsClosed() {
 		logger.Error("agent termination exception - unexpected Aeron close")
-		agent.isAbort.Set(true)
 		return false
 	}
 	nowMs := time.Now().UnixMilli()
 	if agent.cachedTimeMs != nowMs {
 		agent.cachedTimeMs = nowMs
 
+		if agent.aeronClient.IsClosed() {
+			logger.Error("agent termination exception - unexpected Aeron close")
+			return false
+		}
+
 		if agent.commitPosition != nil && agent.commitPosition.IsClosed() {
-			agent.isAbort.Set(true)
 			logger.Error("cluster termination exception - commit-pos counter unexpectedly closed, terminating")
 			return false
 		}
@@ -393,6 +408,37 @@ func (agent *ClusteredServiceAgent) pollServiceAdapter() {
 		}
 		logger.Infof("ack :: pollServiceAdapter :: end :: ackId=%d, clusterTime=%d, clientId=%d, serviceId=%d", ackId, agent.clusterTime, agent.aeronClient.ClientID(), agent.opts.ServiceId)
 		agent.requestedAckPosition = NullPosition
+	}
+}
+
+// We need to call this on end of each StartAndRun() like how java does it with finally
+// Either we defer agent.OnClose() or trap signal and execute it
+// https://github.com/real-logic/aeron/blob/master/aeron-samples/src/main/java/io/aeron/samples/stress/StressMdcClient.java#L292
+func (agent *ClusteredServiceAgent) OnClose() {
+	if agent.isServiceActive {
+		agent.isServiceActive = false
+		agent.service.OnTerminate(agent)
+	}
+	if err := agent.logAdapter.Close(); err != nil {
+		logger.Errorf("error closing log image: %v", err)
+	}
+	if !agent.aeronClient.IsClosed() {
+		if err := agent.serviceAdapter.subscription.Close(); err != nil {
+			logger.Errorf("failed to close service adapter subscription: %v", err)
+		}
+		if err := agent.consensusModuleProxy.publication.Close(); err != nil {
+			logger.Errorf("failed to close consensusModuleProxy.publication: %v", err)
+		}
+		agent.disconnectEgress()
+	}
+	agent.markFile.UpdateActivityTimestamp(NullValue)
+	if err := agent.markFile.file.Close(); err != nil {
+		logger.Errorf("failed to close markFile: %v", err)
+	}
+	if !agent.aeronClient.IsClosed() {
+		if err := agent.aeronClient.Close(); err != nil {
+			logger.Errorf("failed to close aeronClient: %v", err)
+		}
 	}
 }
 
