@@ -14,8 +14,12 @@ package cluster
 
 import (
 	"fmt"
+	"os"
+	"os/signal"
+	"runtime"
 	"strconv"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/lirm/aeron-go/aeron"
@@ -78,6 +82,7 @@ type ClusteredServiceAgent struct {
 	sessionMsgHdrBuffer      *atomic.Buffer
 	requestedAckPosition     int64
 	activeLifecycleCallback  LifeCycleCallback
+	signalChan               chan os.Signal
 }
 
 func NewClusteredServiceAgent(
@@ -166,6 +171,27 @@ func NewClusteredServiceAgent(
 	cmf.SignalReady()
 
 	return agent, nil
+}
+
+func (agent *ClusteredServiceAgent) StartAndRunWithGracefulShutdown() error {
+	agent.signalChan = make(chan os.Signal, 1)
+	signal.Notify(agent.signalChan, syscall.SIGINT, syscall.SIGTERM)
+	defer close(agent.signalChan)
+	defer signal.Stop(agent.signalChan)
+	go func() {
+		for {
+			select {
+			case <-agent.signalChan:
+				signal.Stop(agent.signalChan)
+				close(agent.signalChan)
+				agent.OnClose()
+				return
+			default:
+				runtime.Gosched()
+			}
+		}
+	}()
+	return agent.StartAndRun()
 }
 
 func (agent *ClusteredServiceAgent) StartAndRun() error {
@@ -407,16 +433,16 @@ func (agent *ClusteredServiceAgent) OnClose() {
 	}
 	if !agent.aeronClient.IsClosed() {
 		if err := agent.serviceAdapter.subscription.Close(); err != nil {
-			logger.Error("failed to close service adapter subscription: %v", err)
+			logger.Errorf("failed to close service adapter subscription: %v", err)
 		}
 		if err := agent.consensusModuleProxy.publication.Close(); err != nil {
-			logger.Error("failed to close consensusModuleProxy.publication: %v", err)
+			logger.Errorf("failed to close consensusModuleProxy.publication: %v", err)
 		}
 		agent.disconnectEgress()
 	}
 	agent.markFile.UpdateActivityTimestamp(NullValue)
 	if err := agent.markFile.file.Close(); err != nil {
-		logger.Error("failed to close markFile: %v", err)
+		logger.Errorf("failed to close markFile: %v", err)
 	}
 }
 
