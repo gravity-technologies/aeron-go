@@ -604,15 +604,18 @@ func (archive *Archive) StopRecordingByPublication(publication aeron.Publication
 // Sending the request fails - see error for detail
 // Publication.IsOriginal() is false // FIXME: check semantics
 func (archive *Archive) AddRecordedPublication(channel string, stream int32) (*aeron.Publication, error) {
+	if archive.aeron.IsClosed() {
+		return nil, fmt.Errorf("archive exception - client is closed")
+	}
 
 	// This can fail in aeron via log.Fatalf(), not much we can do
-	publication, err := archive.AddExclusivePublication(channel, stream)
+	publication, err := archive.AddPublication(channel, stream)
 	if err != nil {
 		return nil, err
 	}
-	// if !publication.IsOriginal() {
-	// 	return nil, fmt.Errorf("publication already added for channel=%s stream=%d", channel, stream)
-	// }
+	if !publication.IsOriginal() {
+		return nil, fmt.Errorf("publication already added for channel=%s stream=%d", channel, stream)
+	}
 
 	correlationID := nextCorrelationID()
 	logger.Debugf("AddRecordedPublication(), correlationID:%d", correlationID)
@@ -628,7 +631,7 @@ func (archive *Archive) AddRecordedPublication(channel string, stream int32) (*a
 
 	archive.mtx.Lock()
 	defer archive.mtx.Unlock()
-	if err := archive.Proxy.StartRecordingRequest(correlationID, stream, true, true, sessionChannel); err != nil {
+	if err := archive.Proxy.StartRecordingRequest(correlationID, stream, true, false, sessionChannel); err != nil {
 		publication.Close()
 		return nil, err
 	}
