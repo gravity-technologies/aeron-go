@@ -764,29 +764,29 @@ func (agent *ClusteredServiceAgent) takeSnapshot(logPos int64, leadershipTermId 
 
 	recordingId, counterId, err := agent.awaitRecordingCounterAndId(pub.SessionID())
 	if err != nil {
-		return 0, err
+		return NullValue, err
 	}
 
 	logger.Debugf("takeSnapshot - got recordingId: %d", recordingId)
 	snapshotTaker := newSnapshotTaker(agent.opts, pub)
 	if err := snapshotTaker.markBegin(logPos, leadershipTermId, agent.timeUnit, agent.opts.AppVersion); err != nil {
-		return 0, err
+		return NullValue, err
 	}
 	for _, session := range agent.sessions {
 		if err := snapshotTaker.snapshotSession(session); err != nil {
-			return 0, err
+			return NullValue, err
 		}
 	}
 	if err := snapshotTaker.markEnd(logPos, leadershipTermId, agent.timeUnit, agent.opts.AppVersion); err != nil {
-		return 0, err
+		return NullValue, err
 	}
 	agent.checkForClockTick()
 	if _, err := arch.PollForErrorResponse(); err != nil {
-		return 0, err
+		return NullValue, err
 	}
 	agent.service.OnTakeSnapshot(pub)
 	if err = agent.awaitRecordingComplete(recordingId, pub.Position(), counterId, arch); err != nil {
-		return 0, err
+		return NullValue, err
 	}
 
 	return recordingId, nil
