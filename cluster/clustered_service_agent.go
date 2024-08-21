@@ -355,7 +355,7 @@ func (agent *ClusteredServiceAgent) addSessionFromSnapshot(session *containerCli
 
 func (agent *ClusteredServiceAgent) checkForClockTick() bool {
 	if agent.aeronClient.IsClosed() {
-		logger.Error("agent termination exception - unexpected Aeron close")
+		logger.Logger().Panic("agent termination exception - unexpected Aeron close")
 		return false
 	}
 	nowMs := time.Now().UnixMilli()
@@ -363,12 +363,14 @@ func (agent *ClusteredServiceAgent) checkForClockTick() bool {
 		agent.cachedTimeMs = nowMs
 
 		if agent.aeronClient.IsClosed() {
-			logger.Error("agent termination exception - unexpected Aeron close")
+			agent.terminate()
+			logger.Logger().Panic("agent termination exception - unexpected Aeron close")
 			return false
 		}
 
 		if agent.commitPosition != nil && agent.commitPosition.IsClosed() {
-			logger.Error("cluster termination exception - commit-pos counter unexpectedly closed, terminating")
+			agent.terminate()
+			logger.Logger().Panic("cluster termination exception - commit-pos counter unexpectedly closed, terminating")
 			return false
 		}
 
