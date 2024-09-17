@@ -27,7 +27,6 @@ import (
 )
 
 const controlFragmentLimit = 10
-const ControlResponseNullValue = -1
 
 // Control contains everything required for the archive subscription/response side
 type Control struct {
@@ -47,15 +46,26 @@ type Control struct {
 // The polling mechanism is not parameterized so we need to set state for the results as we go
 // These pieces are filled out by various ResponsePollers which will set IsPollComplete to true
 type ControlResults struct {
+	// ControlResponse
 	ControlSessionId int64
 	CorrelationId    int64
 	RelevantId       int64
-	Position         int64
 	Code             codecs.ControlResponseCodeEnum
-	RecordingSignal  codecs.RecordingSignalEnum
 	Version          int32
-	IsPollComplete   bool
-	ErrorMessage     string
+	ErrorMessage     []uint8
+
+	// RecordingSignal
+	RecordingSignal codecs.RecordingSignalEnum
+	RecordingId     int64
+	SubscriptionId  int64
+	Position        int64
+
+	// Challenge
+	EncodedChallenge []uint8
+
+	// Poller complete status
+	TemplateId     int16
+	IsPollComplete bool
 
 	ControlResponse                  *codecs.ControlResponse
 	RecordingDescriptors             []*codecs.RecordingDescriptor
@@ -711,43 +721,34 @@ func (control *Control) PollForDescriptors(correlationID int64, sessionID int64,
 
 // ----- Rewrite from Java ---- //
 
-// PollForErrorResponse polls the response stream for errors or async events.
-//
-// It will continue until it either receives an error or the queue is empty.
-//
-// If any control messages are present then they will be discarded so this
-// call should not be used unless there are no outstanding operations.
-//
-// This may be used to check for errors, to dispatch async events, and
-// to catch up on messages not for this session if for example the
-// same channel and stream are in use by other sessions.
-//
-// Returns an error if we detect an archive operation in progress
-// and a count of how many messages were consumed
+// PollForErrorResponse polls the response stream once for an error
+// If another message is present then it will be skipped over
+// so only call when not expecting another response. If not connected then return NOT_CONNECTED_MSG
+// return the error otherwise nil if no error is found.
 func (control *Control) PollForErrorResponse() (int, error) {
-	received := 0
-
 	control.Results.ErrorResponse = nil
+	control.Results.ErrorMessage = []uint8{}
+
 	if !control.Subscription.IsConnected() {
-		return received, ErrNotConnected
+		return aeron.NullValue, ErrNotConnected
 	}
 
-	received = control.Poll()
-	if received != 0 && control.Results.IsPollComplete {
-		if control.Results.ControlResponse.ControlSessionId == control.archive.SessionID {
+	if control.Poll() != 0 && control.Results.IsPollComplete {
+		if control.Results.ControlSessionId == control.archive.SessionID {
 			if control.Results.Code == codecs.ControlResponseCode.ERROR {
-				archiveErr := NewArchiveError(control.Results.CorrelationId, int(control.Results.RelevantId), fmt.Sprintf("PollForErrorResponse received a ControlResponse (correlationId:%d Code:ERROR error=\"%s\")", control.Results.CorrelationId, control.Results.ControlResponse.ErrorMessage))
-				return received, archiveErr
+				archiveErr := NewArchiveError(control.Results.CorrelationId, int(control.Results.RelevantId), fmt.Sprintf("PollForErrorResponse received a ControlResponse (correlationId:%d Code:ERROR error=\"%s\")", control.Results.CorrelationId, control.Results.ErrorMessage))
+				control.Results.ErrorResponse = archiveErr
+				return aeron.NullValue, archiveErr
 			}
-			// if control.Results.ErrorResponse != nil {
-			// 	return received, control.Results.ErrorResponse
-			// }
-			// If RecordingSignalEvent then it was handled in the errorResponseFragmentHandler RecordingSignalEventListener
+
+			if control.Results.TemplateId == int16(codecIds.recordingSignalEvent) {
+				control.dispatchRecordingSignal()
+			}
 		}
 	}
 
 	// If we polled and did nothing then return
-	return received, nil
+	return aeron.NullValue, nil
 }
 
 // Poll for control response events. Returns number of fragments read during the operation.
@@ -760,12 +761,19 @@ func (control *Control) Poll() (workCount int) {
 			ControlSessionId: aeron.NullValue,
 			CorrelationId:    aeron.NullValue,
 			RelevantId:       aeron.NullValue,
-			Position:         aeron.NullValue,
-			Code:             codecs.ControlResponseCode.NullValue,
-			RecordingSignal:  codecs.RecordingSignal.NullValue,
 			Version:          0,
-			IsPollComplete:   false,
-			ErrorMessage:     "",
+			Code:             codecs.ControlResponseCode.NullValue,
+			ErrorMessage:     []uint8{},
+
+			RecordingSignal: codecs.RecordingSignal.NullValue,
+			RecordingId:     aeron.NullValue,
+			SubscriptionId:  aeron.NullValue,
+			Position:        aeron.NullValue,
+
+			EncodedChallenge: []uint8{},
+
+			TemplateId:     aeron.NullValue,
+			IsPollComplete: false,
 
 			ControlResponse: nil,
 		}
@@ -784,27 +792,29 @@ func (control *Control) PollForResponse(correlationID int64, sessionID int64) (i
 	start := time.Now()
 
 	for {
-		err := control.pollNextResponse(start, correlationID)
+		err := control.pollNextResponse(start, correlationID, sessionID)
 		if err != nil {
 			logger.Debug(err) // log it in debug mode as an aid to diagnosis
 			return aeron.NullValue, err
 		}
 
 		if control.Results.ControlSessionId != control.archive.SessionID {
-
 			continue
 		}
 
 		// Check result
 		if control.Results.Code == codecs.ControlResponseCode.ERROR {
+			archiveErr := NewArchiveError(correlationID, int(control.Results.RelevantId), fmt.Sprintf("response for correlationId=%d, error: %s", correlationID, control.Results.ErrorMessage))
+			logger.Debug(archiveErr) // log it in debug mode as an aid to diagnosis
+
 			if control.Results.CorrelationId == correlationID {
-				err := fmt.Errorf("Control Response failure: %s", control.Results.ErrorMessage)
-				logger.Debug(err) // log it in debug mode as an aid to diagnosis
-				return aeron.NullValue, err
+				return aeron.NullValue, archiveErr
 			}
-		} else if control.Results.CorrelationId == correlationID {
+		}
+
+		if control.Results.CorrelationId == correlationID {
 			if control.Results.Code != codecs.ControlResponseCode.OK {
-				archiveErr := NewArchiveError(correlationID, int(control.Results.RelevantId), "Unexpected response code: "+string(control.Results.Code))
+				archiveErr := NewArchiveError(correlationID, int(control.Results.RelevantId), "unexpected response code: "+string(control.Results.Code))
 				logger.Debug(archiveErr) // log it in debug mode as an aid to diagnosis
 				return aeron.NullValue, archiveErr
 			}
@@ -813,12 +823,19 @@ func (control *Control) PollForResponse(correlationID int64, sessionID int64) (i
 	}
 }
 
-func (control *Control) pollNextResponse(startTime time.Time, correlationID int64) error {
+func (control *Control) pollNextResponse(startTime time.Time, correlationID, sessionID int64) error {
 	for {
 		fragments := control.Poll()
+
 		if control.Results.IsPollComplete {
-			logger.Debugf("PollForResponse(%d:%d) complete, result is %d", correlationID, "sessionID", control.Results.Code)
-			// TODO: dispatchRecordingSignal
+			logger.Debugf("PollForResponse(%d:%d) complete, result is %d", correlationID, sessionID, control.Results.Code)
+
+			if (control.Results.TemplateId == int16(codecIds.recordingSignalEvent)) &&
+				(control.Results.ControlSessionId == sessionID) {
+				control.dispatchRecordingSignal()
+				continue
+			}
+
 			break
 		}
 
@@ -830,33 +847,12 @@ func (control *Control) pollNextResponse(startTime time.Time, correlationID int6
 			return fmt.Errorf("response channel from archive is not connected")
 		}
 
+		// Check deadline
 		if time.Since(startTime) > control.archive.Options.Timeout {
 			return fmt.Errorf("timeout waiting for correlationID %d", correlationID)
 		}
 
 		control.archive.Options.IdleStrategy.Idle(0)
-		// final int fragments = poller.poll();
-		// if (poller.isPollComplete())
-		//    {
-		//        if (poller.templateId() == RecordingSignalEventDecoder.TEMPLATE_ID &&
-		//            poller.controlSessionId() == controlSessionId)
-		//        {
-		//            dispatchRecordingSignal(poller);
-		//            continue;
-		//        }
-
-		//        break;
-		//    }
-
-		//    if (!poller.subscription().isConnected())
-		//    {
-		//        throw new ArchiveException("response channel from archive is not connected");
-		//    }
-
-		//    checkDeadline(deadlineNs, "awaiting response", correlationId);
-		//    idleStrategy.idle();
-		//    invokeInvokers();
-		//}
 	}
 
 	return nil
@@ -888,7 +884,7 @@ func (control *Control) onFragment(
 		return term.ControlledPollActionContinue
 	}
 
-	// TODO: check schemaId = 17
+	control.Results.TemplateId = int16(hdr.TemplateId)
 
 	switch hdr.TemplateId {
 	case codecIds.controlResponse:
@@ -908,7 +904,7 @@ func (control *Control) onFragment(
 		control.Results.RelevantId = controlResponse.RelevantId
 		control.Results.Code = controlResponse.Code
 		control.Results.Version = controlResponse.Version
-		control.Results.ErrorMessage = string(controlResponse.ErrorMessage)
+		control.Results.ErrorMessage = controlResponse.ErrorMessage
 		control.Results.IsPollComplete = true
 		return term.ControlledPollActionBreak
 
@@ -922,12 +918,13 @@ func (control *Control) onFragment(
 			}
 			return term.ControlledPollActionContinue
 		}
-		control.Results.CorrelationId = challenge.CorrelationId
 		control.Results.ControlSessionId = challenge.ControlSessionId
+		control.Results.CorrelationId = challenge.CorrelationId
 		control.Results.RelevantId = aeron.NullValue
-		control.Results.Code = ControlResponseNullValue
+		control.Results.Code = codecs.ControlResponseCode.NullValue
 		control.Results.Version = challenge.Version
-		control.Results.ErrorMessage = ""
+		control.Results.ErrorMessage = []uint8{}
+		control.Results.EncodedChallenge = challenge.EncodedChallenge
 		control.Results.IsPollComplete = true
 		return term.ControlledPollActionBreak
 
@@ -941,9 +938,10 @@ func (control *Control) onFragment(
 			}
 			return term.ControlledPollActionContinue
 		}
-		control.Results.CorrelationId = recordingSignalEvent.CorrelationId
 		control.Results.ControlSessionId = recordingSignalEvent.ControlSessionId
-		control.Results.RelevantId = recordingSignalEvent.RecordingId
+		control.Results.CorrelationId = recordingSignalEvent.CorrelationId
+		control.Results.RecordingId = recordingSignalEvent.RecordingId
+		control.Results.SubscriptionId = recordingSignalEvent.SubscriptionId
 		control.Results.Position = recordingSignalEvent.Position
 		control.Results.RecordingSignal = recordingSignalEvent.Signal
 		control.Results.IsPollComplete = true
@@ -953,6 +951,19 @@ func (control *Control) onFragment(
 		logger.Debug("descriptorFragmentHandler: Insert decoder for type: %d", hdr.TemplateId)
 	}
 	return term.ControlledPollActionContinue
+}
+
+func (control *Control) dispatchRecordingSignal() {
+	if control.archive.Listeners.RecordingSignalListener != nil {
+		control.archive.Listeners.RecordingSignalListener(&codecs.RecordingSignalEvent{
+			ControlSessionId: control.Results.ControlSessionId,
+			CorrelationId:    control.Results.CorrelationId,
+			RecordingId:      control.Results.RecordingId,
+			SubscriptionId:   control.Results.SubscriptionId,
+			Position:         control.Results.Position,
+			Signal:           control.Results.RecordingSignal,
+		})
+	}
 }
 
 // ----- Rewrite from Java [End] ---- //

@@ -25,7 +25,7 @@ func TestControl_PollForResponse(t *testing.T) {
 		mockPollResponses(t, control, image, false)
 		correlations.Store(int64(1), control)
 		id, err := control.PollForResponse(1, 0)
-		assert.Equal(t, id, aeron.NullValue)
+		assert.Equal(t, int(id), aeron.NullValue)
 		assert.EqualError(t, err, `timeout waiting for correlationID 1`)
 	})
 
@@ -42,7 +42,7 @@ func TestControl_PollForResponse(t *testing.T) {
 		correlations.Store(int64(1), control)
 		id, err := control.PollForResponse(1, 0)
 		assert.EqualValues(t, -1, id)
-		assert.EqualError(t, err, `Control Response failure: b0rk`)
+		assert.EqualError(t, err, `archive error: response for correlationId=1, error: b0rk`)
 	})
 
 	t.Run("discards all responses preceding the first error", func(t *testing.T) {
@@ -60,7 +60,7 @@ func TestControl_PollForResponse(t *testing.T) {
 		correlations.Store(int64(1), control)
 		id, err := control.PollForResponse(1, 0)
 		assert.EqualValues(t, -1, id)
-		assert.EqualError(t, err, `Control Response failure: b0rk`)
+		assert.EqualError(t, err, `archive error: response for correlationId=1, error: b0rk`)
 	})
 
 	t.Run("does not process messages after result", func(t *testing.T) {
@@ -77,7 +77,7 @@ func TestControl_PollForResponse(t *testing.T) {
 		correlations.Store(int64(1), control)
 		id, err := control.PollForResponse(1, 0)
 		assert.EqualValues(t, -1, id)
-		assert.EqualError(t, err, `Control Response failure: b0rk`)
+		assert.EqualError(t, err, `archive error: response for correlationId=1, error: b0rk`)
 		fragments := image.Poll(func(buffer *atomic.Buffer, offset, length int32, header *logbuffer.Header) {}, 1)
 		assert.EqualValues(t, 1, fragments)
 	})
@@ -97,7 +97,7 @@ func TestControl_PollForErrorResponse(t *testing.T) {
 		var archiveErr *ArchiveError
 		assert.True(t, errors.As(err, &archiveErr))
 		assert.EqualValues(t, ExceptionSpaceStorage, int(archiveErr.ErrorCode))
-		assert.EqualValues(t, 1, cnt)
+		assert.EqualValues(t, -1, cnt)
 		assert.EqualError(t, err, `archive error: PollForErrorResponse received a ControlResponse (correlationId:0 Code:ERROR error="11")`)
 	})
 
@@ -105,7 +105,8 @@ func TestControl_PollForErrorResponse(t *testing.T) {
 		control, image := newTestControl(t)
 		mockPollResponses(t, control, image, true)
 		cnt, err := control.PollForErrorResponse()
-		assert.Zero(t, cnt)
+		// assert.Zero(t, cnt)
+		assert.EqualValues(t, -1, cnt)
 		assert.NoError(t, err)
 	})
 
@@ -118,7 +119,7 @@ func TestControl_PollForErrorResponse(t *testing.T) {
 			},
 		)
 		cnt, err := control.PollForErrorResponse()
-		assert.EqualValues(t, 1, cnt)
+		assert.EqualValues(t, -1, cnt)
 		assert.EqualError(t, err, `archive error: PollForErrorResponse received a ControlResponse (correlationId:0 Code:ERROR error="b0rk")`)
 	})
 
@@ -144,10 +145,10 @@ func TestControl_PollForErrorResponse(t *testing.T) {
 			&codecs.ControlResponse{Code: codecs.ControlResponseCode.OK},
 		)
 		cnt, err := control.PollForErrorResponse()
-		assert.EqualValues(t, 1, cnt)
+		assert.EqualValues(t, -1, cnt)
 		assert.Error(t, err)
 		cnt, err = control.PollForErrorResponse()
-		assert.EqualValues(t, 1, cnt)
+		assert.EqualValues(t, -1, cnt)
 		assert.NoError(t, err)
 	})
 }
@@ -175,7 +176,6 @@ func mockPollResponses(t *testing.T, control *Control, image *aeron.MockImage, i
 		fragmentCount := args.Get(1).(int)
 		var handler term.ControlledFragmentHandler
 		if isErrorResponse {
-			// handler = control.errorFragmentHandler
 			handler = control.fragmentAssembler.OnFragment
 		} else {
 			handler = args.Get(0).(term.ControlledFragmentHandler)
