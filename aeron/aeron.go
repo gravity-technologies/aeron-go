@@ -16,8 +16,9 @@
 package aeron
 
 import (
-	"github.com/lirm/aeron-go/aeron/atomic"
 	"time"
+
+	"github.com/lirm/aeron-go/aeron/atomic"
 
 	"github.com/lirm/aeron-go/aeron/broadcast"
 	"github.com/lirm/aeron-go/aeron/counters"
@@ -28,7 +29,7 @@ import (
 )
 
 // NullValue is used to represent a null value for when some value is not yet set.
-const NullValue = -1
+const NullValue = int64(-1)
 
 // NewPublicationHandler is the handler type for new publication notification from the media driver
 type NewPublicationHandler func(string, int32, int32, int64)

@@ -27,6 +27,7 @@ import (
 )
 
 const controlFragmentLimit = 10
+const ControlResponseNullValue = -1
 
 // Control contains everything required for the archive subscription/response side
 type Control struct {
@@ -46,11 +47,19 @@ type Control struct {
 // The polling mechanism is not parameterized so we need to set state for the results as we go
 // These pieces are filled out by various ResponsePollers which will set IsPollComplete to true
 type ControlResults struct {
-	CorrelationId                    int64
+	ControlSessionId int64
+	CorrelationId    int64
+	RelevantId       int64
+	Position         int64
+	Code             codecs.ControlResponseCodeEnum
+	RecordingSignal  codecs.RecordingSignalEnum
+	Version          int32
+	IsPollComplete   bool
+	ErrorMessage     string
+
 	ControlResponse                  *codecs.ControlResponse
 	RecordingDescriptors             []*codecs.RecordingDescriptor
 	RecordingSubscriptionDescriptors []*codecs.RecordingSubscriptionDescriptor
-	IsPollComplete                   bool
 	FragmentsReceived                int
 	ErrorResponse                    error // Used by PollForErrorResponse
 }
@@ -343,42 +352,6 @@ func ConnectionControlFragmentHandler(context *PollContext, buffer *atomic.Buffe
 	}
 }
 
-// PollForErrorResponse polls the response stream for errors or async events.
-//
-// It will continue until it either receives an error or the queue is empty.
-//
-// If any control messages are present then they will be discarded so this
-// call should not be used unless there are no outstanding operations.
-//
-// This may be used to check for errors, to dispatch async events, and
-// to catch up on messages not for this session if for example the
-// same channel and stream are in use by other sessions.
-//
-// Returns an error if we detect an archive operation in progress
-// and a count of how many messages were consumed
-func (control *Control) PollForErrorResponse() (int, error) {
-	received := 0
-
-	control.Results.ErrorResponse = nil
-	if !control.Subscription.IsConnected() {
-		return received, ErrNotConnected
-	}
-
-	received = control.poll(control.errorFragmentHandler, controlFragmentLimit)
-	if received != 0 && control.Results.IsPollComplete {
-		if control.Results.ControlResponse.ControlSessionId == control.archive.SessionID {
-			// If we received a response with an error then return it
-			if control.Results.ErrorResponse != nil {
-				return received, control.Results.ErrorResponse
-			}
-			// If RecordingSignalEvent then it was handled in the errorResponseFragmentHandler RecordingSignalEventListener
-		}
-	}
-
-	// If we polled and did nothing then return
-	return received, nil
-}
-
 // errorResponseFragmentHandler is used to check for errors and async events on an idle control
 // session. Essentially:
 //
@@ -414,6 +387,7 @@ func (control *Control) errorResponseFragmentHandler(buffer *atomic.Buffer, offs
 	switch hdr.TemplateId {
 	case codecIds.controlResponse:
 		var controlResponse = new(codecs.ControlResponse)
+		pollContext.control.Results.ControlResponse = controlResponse
 		logger.Debugf("controlFragmentHandler/controlResponse: Received controlResponse")
 		if err := controlResponse.Decode(marshaller, buf, hdr.Version, hdr.BlockLength, rangeChecking); err != nil {
 			// Not much to be done here as we can't see what's gone wrong
@@ -430,6 +404,7 @@ func (control *Control) errorResponseFragmentHandler(buffer *atomic.Buffer, offs
 			if controlResponse.Code == codecs.ControlResponseCode.ERROR {
 				archiveErr := NewArchiveError(controlResponse.CorrelationId, int(controlResponse.RelevantId), fmt.Sprintf("PollForErrorResponse received a ControlResponse (correlationId:%d Code:ERROR error=\"%s\"", controlResponse.CorrelationId, controlResponse.ErrorMessage))
 				pollContext.control.Results.ErrorResponse = archiveErr
+				pollContext.control.Results.IsPollComplete = true
 				return term.ControlledPollActionBreak
 			}
 		}
@@ -450,7 +425,10 @@ func (control *Control) errorResponseFragmentHandler(buffer *atomic.Buffer, offs
 		if challenge.ControlSessionId == pollContext.control.archive.SessionID {
 			pollContext.control.Results.ErrorResponse = fmt.Errorf("Received and ignoring challenge  (correlationID:%d). EerrorResponse should not be called on in parallel with sync operations", challenge.CorrelationId)
 			logger.Warning(pollContext.control.Results.ErrorResponse)
-			return
+
+			pollContext.control.Results.IsPollComplete = true
+			return term.ControlledPollActionBreak
+			// return
 		}
 
 	case codecIds.recordingDescriptor:
@@ -468,7 +446,10 @@ func (control *Control) errorResponseFragmentHandler(buffer *atomic.Buffer, offs
 		if rd.ControlSessionId == pollContext.control.archive.SessionID {
 			pollContext.control.Results.ErrorResponse = fmt.Errorf("Received and ignoring recordingDescriptor (correlationID:%d). ErrorResponse should not be called on in parallel with sync operations", rd.CorrelationId)
 			logger.Warning(pollContext.control.Results.ErrorResponse)
-			return
+
+			pollContext.control.Results.IsPollComplete = true
+			return term.ControlledPollActionBreak
+			// return
 		}
 
 	case codecIds.recordingSubscriptionDescriptor:
@@ -486,6 +467,9 @@ func (control *Control) errorResponseFragmentHandler(buffer *atomic.Buffer, offs
 		if rsd.ControlSessionId == pollContext.control.archive.SessionID {
 			pollContext.control.Results.ErrorResponse = fmt.Errorf("Received and ignoring recordingsubscriptionDescriptor (correlationID:%d). ErrorResponse should not be called on in parallel with sync operations", rsd.CorrelationId)
 			logger.Warning(pollContext.control.Results.ErrorResponse)
+
+			pollContext.control.Results.IsPollComplete = true
+			return term.ControlledPollActionBreak
 		}
 
 	case codecIds.recordingSignalEvent:
@@ -504,6 +488,9 @@ func (control *Control) errorResponseFragmentHandler(buffer *atomic.Buffer, offs
 			if pollContext.control.archive.Listeners.RecordingSignalListener != nil {
 				pollContext.control.archive.Listeners.RecordingSignalListener(rse)
 			}
+
+			pollContext.control.Results.IsPollComplete = true
+			return term.ControlledPollActionBreak
 		}
 
 	default:
@@ -524,132 +511,6 @@ func (control *Control) poll(handler term.ControlledFragmentHandler, fragmentLim
 	control.Results.IsPollComplete = false // Clear completion flag
 
 	return control.Subscription.ControlledPoll(handler, fragmentLimit)
-}
-
-// Poll for control response events. Returns number of fragments read during the operation.
-// Zero if no events are available.
-func (control *Control) Poll() (workCount int) {
-	if control.Results.IsPollComplete {
-		// Update our globals in case they've changed so we use the current state in our callback
-		rangeChecking = control.archive.Options.RangeChecking
-		control.Results = ControlResults{}
-	}
-
-	return control.Subscription.ControlledPoll(control.fragmentAssembler.OnFragment, controlFragmentLimit)
-}
-
-func (control *Control) onFragment(
-	buffer *atomic.Buffer,
-	offset int32,
-	length int32,
-	header *logbuffer.Header,
-) term.ControlledPollAction {
-
-	if control.Results.IsPollComplete {
-		return term.ControlledPollActionAbort
-	}
-
-	var hdr codecs.SbeGoMessageHeader
-
-	buf := new(bytes.Buffer)
-	buffer.WriteBytes(buf, offset, length)
-
-	marshaller := codecs.NewSbeGoMarshaller()
-	if err := hdr.Decode(marshaller, buf); err != nil {
-		// Not much to be done here as we can't correlate
-		err = fmt.Errorf("DescriptorFragmentHandler() failed to decode control message header: %w", err)
-		if control.archive.Listeners.ErrorListener != nil {
-			control.archive.Listeners.ErrorListener(err)
-		}
-		return term.ControlledPollActionContinue
-	}
-
-	switch hdr.TemplateId {
-	case codecIds.controlResponse:
-		var controlResponse = new(codecs.ControlResponse)
-		logger.Debugf("Received controlResponse: length %d", buf.Len())
-		if err := controlResponse.Decode(marshaller, buf, hdr.Version, hdr.BlockLength, rangeChecking); err != nil {
-			// Not much to be done here as we can't correlate
-			err = fmt.Errorf("failed to decode control response: %w", err)
-			if control.archive.Listeners.ErrorListener != nil {
-				control.archive.Listeners.ErrorListener(err)
-			}
-			return term.ControlledPollActionContinue
-		}
-		control.Results.ControlResponse = controlResponse
-		control.Results.IsPollComplete = true
-		control.Results.CorrelationId = controlResponse.CorrelationId
-		return term.ControlledPollActionBreak
-
-	case codecIds.recordingSignalEvent:
-		var recordingSignalEvent = new(codecs.RecordingSignalEvent)
-		if err := recordingSignalEvent.Decode(marshaller, buf, hdr.Version, hdr.BlockLength, rangeChecking); err != nil {
-			// Not much to be done here as we can't correlate
-			err = fmt.Errorf("failed to decode recording signal: %w", err)
-			if control.archive.Listeners.ErrorListener != nil {
-				control.archive.Listeners.ErrorListener(err)
-			}
-			return term.ControlledPollActionContinue
-		}
-
-	default:
-		logger.Debug("descriptorFragmentHandler: Insert decoder for type: %d", hdr.TemplateId)
-	}
-	return term.ControlledPollActionContinue
-}
-
-// PollForResponse polls for a specific correlationID
-// Returns (relevantId, nil) on success, (0 or relevantId, error) on failure
-// More complex responses are contained in Control.ControlResponse after the call
-func (control *Control) PollForResponse(correlationID int64, sessionID int64) (int64, error) {
-	logger.Debugf("PollForResponse(%d:%d)", correlationID, sessionID)
-
-	// Poll for events.
-	//
-	// As we can get async events we receive a fairly arbitrary
-	// number of messages here.
-	//
-	// Additionally if two clients use the same channel/stream for
-	// responses they will see each others messages so we just
-	// continually poll until we get our response or timeout
-	// without having completed and treat that as an error
-	start := time.Now()
-	context := PollContext{control, correlationID}
-
-	handler := aeron.NewControlledFragmentAssembler(func(buf *atomic.Buffer, offset int32, length int32, header *logbuffer.Header) term.ControlledPollAction {
-		return controlFragmentHandler(&context, buf, offset, length, header)
-	}, aeron.DefaultFragmentAssemblyBufferLength)
-	for {
-		ret := control.poll(handler.OnFragment, 10)
-
-		// Check result
-		if control.Results.IsPollComplete {
-			logger.Debugf("PollForResponse(%d:%d) complete, result is %d", correlationID, sessionID, control.Results.ControlResponse.Code)
-			if control.Results.ControlResponse.Code != codecs.ControlResponseCode.OK {
-				err := fmt.Errorf("Control Response failure: %s", control.Results.ControlResponse.ErrorMessage)
-				logger.Debug(err) // log it in debug mode as an aid to diagnosis
-				return control.Results.ControlResponse.RelevantId, err
-			}
-			// logger.Debugf("PollForResponse(%d:%d) success", correlationID, sessionID)
-			return control.Results.ControlResponse.RelevantId, nil
-		}
-
-		if control.Subscription.IsClosed() {
-			return 0, fmt.Errorf("response channel from archive is not connected")
-		}
-
-		if time.Since(start) > control.archive.Options.Timeout {
-			return 0, fmt.Errorf("timeout waiting for correlationID %d", correlationID)
-		}
-
-		// Idle as configured if there was nothing there
-		// logger.Debugf("PollForResponse(%d:%d) idle", correlationID, sessionID)
-		if ret == 0 {
-			control.archive.Options.IdleStrategy.Idle(0)
-		}
-	}
-
-	return 0, fmt.Errorf("PollForResponse out of loop") // can't happen
 }
 
 // DescriptorFragmentHandler is used to poll for descriptors (both recording and subscription)
@@ -847,3 +708,251 @@ func (control *Control) PollForDescriptors(correlationID int64, sessionID int64,
 	}
 	return nil
 }
+
+// ----- Rewrite from Java ---- //
+
+// PollForErrorResponse polls the response stream for errors or async events.
+//
+// It will continue until it either receives an error or the queue is empty.
+//
+// If any control messages are present then they will be discarded so this
+// call should not be used unless there are no outstanding operations.
+//
+// This may be used to check for errors, to dispatch async events, and
+// to catch up on messages not for this session if for example the
+// same channel and stream are in use by other sessions.
+//
+// Returns an error if we detect an archive operation in progress
+// and a count of how many messages were consumed
+func (control *Control) PollForErrorResponse() (int, error) {
+	received := 0
+
+	control.Results.ErrorResponse = nil
+	if !control.Subscription.IsConnected() {
+		return received, ErrNotConnected
+	}
+
+	received = control.Poll()
+	if received != 0 && control.Results.IsPollComplete {
+		if control.Results.ControlResponse.ControlSessionId == control.archive.SessionID {
+			if control.Results.Code == codecs.ControlResponseCode.ERROR {
+				archiveErr := NewArchiveError(control.Results.CorrelationId, int(control.Results.RelevantId), fmt.Sprintf("PollForErrorResponse received a ControlResponse (correlationId:%d Code:ERROR error=\"%s\")", control.Results.CorrelationId, control.Results.ControlResponse.ErrorMessage))
+				return received, archiveErr
+			}
+			// if control.Results.ErrorResponse != nil {
+			// 	return received, control.Results.ErrorResponse
+			// }
+			// If RecordingSignalEvent then it was handled in the errorResponseFragmentHandler RecordingSignalEventListener
+		}
+	}
+
+	// If we polled and did nothing then return
+	return received, nil
+}
+
+// Poll for control response events. Returns number of fragments read during the operation.
+// Zero if no events are available.
+func (control *Control) Poll() (workCount int) {
+	if control.Results.IsPollComplete {
+		// Update our globals in case they've changed so we use the current state in our callback
+		rangeChecking = control.archive.Options.RangeChecking
+		control.Results = ControlResults{
+			ControlSessionId: aeron.NullValue,
+			CorrelationId:    aeron.NullValue,
+			RelevantId:       aeron.NullValue,
+			Position:         aeron.NullValue,
+			Code:             codecs.ControlResponseCode.NullValue,
+			RecordingSignal:  codecs.RecordingSignal.NullValue,
+			Version:          0,
+			IsPollComplete:   false,
+			ErrorMessage:     "",
+
+			ControlResponse: nil,
+		}
+	}
+
+	return control.Subscription.ControlledPoll(control.fragmentAssembler.OnFragment, controlFragmentLimit)
+}
+
+// PollForResponse polls for a specific correlationID
+// Returns (relevantId, nil) on success, (-1 or relevantId, error) on failure
+// More complex responses are contained in Control.ControlResponse after the call
+func (control *Control) PollForResponse(correlationID int64, sessionID int64) (int64, error) {
+	logger.Debugf("PollForResponse(%d:%d)", correlationID, sessionID)
+
+	// Poll for events.
+	start := time.Now()
+
+	for {
+		err := control.pollNextResponse(start, correlationID)
+		if err != nil {
+			logger.Debug(err) // log it in debug mode as an aid to diagnosis
+			return aeron.NullValue, err
+		}
+
+		if control.Results.ControlSessionId != control.archive.SessionID {
+
+			continue
+		}
+
+		// Check result
+		if control.Results.Code == codecs.ControlResponseCode.ERROR {
+			if control.Results.CorrelationId == correlationID {
+				err := fmt.Errorf("Control Response failure: %s", control.Results.ErrorMessage)
+				logger.Debug(err) // log it in debug mode as an aid to diagnosis
+				return aeron.NullValue, err
+			}
+		} else if control.Results.CorrelationId == correlationID {
+			if control.Results.Code != codecs.ControlResponseCode.OK {
+				archiveErr := NewArchiveError(correlationID, int(control.Results.RelevantId), "Unexpected response code: "+string(control.Results.Code))
+				logger.Debug(archiveErr) // log it in debug mode as an aid to diagnosis
+				return aeron.NullValue, archiveErr
+			}
+			return control.Results.RelevantId, nil
+		}
+	}
+}
+
+func (control *Control) pollNextResponse(startTime time.Time, correlationID int64) error {
+	for {
+		fragments := control.Poll()
+		if control.Results.IsPollComplete {
+			logger.Debugf("PollForResponse(%d:%d) complete, result is %d", correlationID, "sessionID", control.Results.Code)
+			// TODO: dispatchRecordingSignal
+			break
+		}
+
+		if fragments > 0 {
+			continue
+		}
+
+		if control.Subscription.IsClosed() {
+			return fmt.Errorf("response channel from archive is not connected")
+		}
+
+		if time.Since(startTime) > control.archive.Options.Timeout {
+			return fmt.Errorf("timeout waiting for correlationID %d", correlationID)
+		}
+
+		control.archive.Options.IdleStrategy.Idle(0)
+		// final int fragments = poller.poll();
+		// if (poller.isPollComplete())
+		//    {
+		//        if (poller.templateId() == RecordingSignalEventDecoder.TEMPLATE_ID &&
+		//            poller.controlSessionId() == controlSessionId)
+		//        {
+		//            dispatchRecordingSignal(poller);
+		//            continue;
+		//        }
+
+		//        break;
+		//    }
+
+		//    if (!poller.subscription().isConnected())
+		//    {
+		//        throw new ArchiveException("response channel from archive is not connected");
+		//    }
+
+		//    checkDeadline(deadlineNs, "awaiting response", correlationId);
+		//    idleStrategy.idle();
+		//    invokeInvokers();
+		//}
+	}
+
+	return nil
+}
+
+func (control *Control) onFragment(
+	buffer *atomic.Buffer,
+	offset int32,
+	length int32,
+	header *logbuffer.Header,
+) term.ControlledPollAction {
+
+	if control.Results.IsPollComplete {
+		return term.ControlledPollActionAbort
+	}
+
+	var hdr codecs.SbeGoMessageHeader
+
+	buf := new(bytes.Buffer)
+	buffer.WriteBytes(buf, offset, length)
+
+	marshaller := codecs.NewSbeGoMarshaller()
+	if err := hdr.Decode(marshaller, buf); err != nil {
+		// Not much to be done here as we can't correlate
+		err = fmt.Errorf("DescriptorFragmentHandler() failed to decode control message header: %w", err)
+		if control.archive.Listeners.ErrorListener != nil {
+			control.archive.Listeners.ErrorListener(err)
+		}
+		return term.ControlledPollActionContinue
+	}
+
+	// TODO: check schemaId = 17
+
+	switch hdr.TemplateId {
+	case codecIds.controlResponse:
+		var controlResponse = new(codecs.ControlResponse)
+		logger.Debugf("Received controlResponse: length %d", buf.Len())
+		if err := controlResponse.Decode(marshaller, buf, hdr.Version, hdr.BlockLength, rangeChecking); err != nil {
+			// Not much to be done here as we can't correlate
+			err = fmt.Errorf("failed to decode control response: %w", err)
+			if control.archive.Listeners.ErrorListener != nil {
+				control.archive.Listeners.ErrorListener(err)
+			}
+			return term.ControlledPollActionContinue
+		}
+		control.Results.ControlResponse = controlResponse
+		control.Results.CorrelationId = controlResponse.CorrelationId
+		control.Results.ControlSessionId = controlResponse.ControlSessionId
+		control.Results.RelevantId = controlResponse.RelevantId
+		control.Results.Code = controlResponse.Code
+		control.Results.Version = controlResponse.Version
+		control.Results.ErrorMessage = string(controlResponse.ErrorMessage)
+		control.Results.IsPollComplete = true
+		return term.ControlledPollActionBreak
+
+	case codecIds.challenge:
+		var challenge = new(codecs.Challenge)
+		if err := challenge.Decode(marshaller, buf, hdr.Version, hdr.BlockLength, rangeChecking); err != nil {
+			// Not much to be done here as we can't correlate
+			err = fmt.Errorf("failed to decode challenge: %w", err)
+			if control.archive.Listeners.ErrorListener != nil {
+				control.archive.Listeners.ErrorListener(err)
+			}
+			return term.ControlledPollActionContinue
+		}
+		control.Results.CorrelationId = challenge.CorrelationId
+		control.Results.ControlSessionId = challenge.ControlSessionId
+		control.Results.RelevantId = aeron.NullValue
+		control.Results.Code = ControlResponseNullValue
+		control.Results.Version = challenge.Version
+		control.Results.ErrorMessage = ""
+		control.Results.IsPollComplete = true
+		return term.ControlledPollActionBreak
+
+	case codecIds.recordingSignalEvent:
+		var recordingSignalEvent = new(codecs.RecordingSignalEvent)
+		if err := recordingSignalEvent.Decode(marshaller, buf, hdr.Version, hdr.BlockLength, rangeChecking); err != nil {
+			// Not much to be done here as we can't correlate
+			err = fmt.Errorf("failed to decode recording signal: %w", err)
+			if control.archive.Listeners.ErrorListener != nil {
+				control.archive.Listeners.ErrorListener(err)
+			}
+			return term.ControlledPollActionContinue
+		}
+		control.Results.CorrelationId = recordingSignalEvent.CorrelationId
+		control.Results.ControlSessionId = recordingSignalEvent.ControlSessionId
+		control.Results.RelevantId = recordingSignalEvent.RecordingId
+		control.Results.Position = recordingSignalEvent.Position
+		control.Results.RecordingSignal = recordingSignalEvent.Signal
+		control.Results.IsPollComplete = true
+		return term.ControlledPollActionBreak
+
+	default:
+		logger.Debug("descriptorFragmentHandler: Insert decoder for type: %d", hdr.TemplateId)
+	}
+	return term.ControlledPollActionContinue
+}
+
+// ----- Rewrite from Java [End] ---- //
