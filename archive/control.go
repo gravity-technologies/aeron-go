@@ -364,23 +364,19 @@ func (control *Control) PollForErrorResponse() (int, error) {
 		return received, ErrNotConnected
 	}
 
-	// Poll for async events, errors etc until the queue is drained
-	for {
-		ret := control.poll(control.errorFragmentHandler, 10)
-		received += ret
-
-		// If we received a response with an error then return it
-		if control.Results.ErrorResponse != nil {
-			return received, control.Results.ErrorResponse
-		}
-
-		// If we polled and did nothing then return
-		if ret == 0 {
-			return received, nil
+	received = control.poll(control.errorFragmentHandler, controlFragmentLimit)
+	if received != 0 && control.Results.IsPollComplete {
+		if control.Results.ControlResponse.ControlSessionId == control.archive.SessionID {
+			// If we received a response with an error then return it
+			if control.Results.ErrorResponse != nil {
+				return received, control.Results.ErrorResponse
+			}
+			// If RecordingSignalEvent then it was handled in the errorResponseFragmentHandler RecordingSignalEventListener
 		}
 	}
 
-	return 0, nil // Should not happen
+	// If we polled and did nothing then return
+	return received, nil
 }
 
 // errorResponseFragmentHandler is used to check for errors and async events on an idle control
@@ -501,9 +497,6 @@ func (control *Control) errorResponseFragmentHandler(buffer *atomic.Buffer, offs
 			if pollContext.control.archive.Listeners.ErrorListener != nil {
 				pollContext.control.archive.Listeners.ErrorListener(err2)
 			}
-		}
-		if pollContext.control.archive.Listeners.RecordingSignalListener != nil {
-			pollContext.control.archive.Listeners.RecordingSignalListener(rse)
 		}
 
 		if rse.ControlSessionId == pollContext.control.archive.SessionID {
