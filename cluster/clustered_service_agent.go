@@ -13,6 +13,7 @@
 package cluster
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"os/signal"
@@ -782,6 +783,12 @@ func (agent *ClusteredServiceAgent) takeSnapshot(logPos int64, leadershipTermId 
 	}
 	agent.checkForClockTick()
 	if _, err := arch.PollForErrorResponse(); err != nil {
+		var archiveErr *archive.ArchiveError
+		if errors.As(err, &archiveErr) {
+			if archiveErr.ErrorCode == archive.ExceptionSpaceStorage {
+				agent.terminate()
+			}
+		}
 		return NullValue, err
 	}
 	agent.service.OnTakeSnapshot(pub)
@@ -802,7 +809,7 @@ func (agent *ClusteredServiceAgent) awaitRecordingCounterAndId(sessionId int32) 
 			}
 			return false
 		})
-		if counterId != NullValue {
+		if counterId != counters.NullCounterId {
 			return recId, counterId, nil
 		}
 		agent.Idle(0)
