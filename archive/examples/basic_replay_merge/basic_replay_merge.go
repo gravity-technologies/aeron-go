@@ -72,7 +72,11 @@ func main() {
 		logging.SetLevel(logging.NOTICE, logID)
 	}
 
-	arch, err := archive.NewArchive(options, context)
+	archiveCtx, err := archive.NewArchiveContext(options, context, nil)
+	if err != nil {
+		logger.Fatalf(err.Error())
+	}
+	arch, err := archive.Connect(archiveCtx)
 	if err != nil {
 		logger.Fatalf("Failed to connect to media driver: %s\n", err.Error())
 	}

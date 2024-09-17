@@ -106,7 +106,8 @@ func TestMain(m *testing.M) {
 		DEBUG = true
 	}
 
-	archive, err = NewArchive(options, context)
+	archiveCtx, err := NewArchiveContext(options, context, nil)
+	archive, err = Connect(archiveCtx)
 	if err != nil || archive == nil {
 		log.Printf("archive-media-driver connection failed, skipping all archive_tests:%s", err.Error())
 		return
@@ -135,7 +136,8 @@ func TestMain(m *testing.M) {
 		testCases[0].replayStream++
 	}
 
-	archive, err = NewArchive(options, context)
+	archiveCtx, err = NewArchiveContext(options, context, nil)
+	archive, err = Connect(archiveCtx)
 	if err != nil || archive == nil {
 		log.Printf("secure-archive-media-driver connection failed, skipping allsecure  archive_tests:%s", err.Error())
 		haveArchive = false
@@ -348,7 +350,7 @@ func TestPollForErrorEvents(t *testing.T) {
 	// Now we'll reach inside the archive a little to leave an outstanding request in the queue
 	// We know a StopRecording of a non-existent recording should fail but this call will succeed
 	// as it's only the request half
-	err = archive.Proxy.StopRecordingSubscriptionRequest(12345, 54321)
+	err = archive.Proxy.StopRecordingSubscriptionRequest(12345, 54321, archive.SessionID)
 	if err != nil {
 		t.Log(err)
 		t.FailNow()
@@ -688,7 +690,8 @@ func ConcurrentSimple(wg *sync.WaitGroup, n int, t *testing.T) {
 	r := rand.New(rand.NewSource(time.Now().UnixNano()))
 	testCases[0].sampleStream += int32(r.Intn(10000))
 
-	archive, err = NewArchive(options, context)
+	archiveCtx, err := NewArchiveContext(options, context, nil)
+	archive, err = Connect(archiveCtx)
 	if err != nil || archive == nil {
 		t.Logf("archive-media-driver connection failed, skipping all archive_tests:%s", err.Error())
 		return

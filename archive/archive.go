@@ -41,6 +41,12 @@ type Archive struct {
 	Events       *RecordingEventsAdapter // For async recording events (must be enabled)
 	Listeners    *ArchiveListeners       // Per client event listeners for async callbacks
 	mtx          sync.Mutex              // To ensure no overlapped I/O on archive RPC calls
+
+	ArchiveContext ArchiveContext
+	ArchiveId      int64
+	// ControlSessionId == SessionID
+	// ArchiveProxy == Proxy
+
 }
 
 // Constant values used to control behaviour of StartReplay
@@ -184,9 +190,6 @@ func AddSessionIdToChannel(channel string, sessionID int32) (string, error) {
 	return uri.String(), nil
 }
 
-// NewArchive factory method to create an Archive instance
-// You may provide your own archive Options or otherwise one will be created from defaults
-// You may provide your own aeron Context or otherwise one will be created from defaults
 func NewArchive(options *Options, context *aeron.Context) (*Archive, error) {
 	var err error
 
@@ -223,13 +226,9 @@ func NewArchive(options *Options, context *aeron.Context) (*Archive, error) {
 	// Setup the Control (subscriber/response)
 	archive.Control = new(Control)
 	archive.Control.archive = archive
-	archive.Control.fragmentAssembler = aeron.NewControlledFragmentAssembler(
-		archive.Control.onFragment, aeron.DefaultFragmentAssemblyBufferLength)
-	archive.Control.errorFragmentHandler = archive.Control.errorResponseFragmentHandler
 
 	// Setup the Proxy (publisher/request)
 	archive.Proxy = new(Proxy)
-	archive.Proxy.archive = archive
 	archive.Proxy.marshaller = codecs.NewSbeGoMarshaller()
 
 	// Setup Recording Events (although it's not enabled by default)
@@ -315,6 +314,8 @@ func NewArchive(options *Options, context *aeron.Context) (*Archive, error) {
 		}
 	}
 
+	archive.Control.controlResponsePoller = NewControlResponsePoller(sub, ControlFragmentLimit)
+
 	start = time.Now()
 	pollContext := PollContext{archive.Control, correlationID}
 
@@ -350,13 +351,335 @@ func NewArchive(options *Options, context *aeron.Context) (*Archive, error) {
 	return archive, archive.Control.State.err
 }
 
+// NewArchive factory method to create an Archive instance
+// You may provide your own archive Options or otherwise one will be created from defaults
+// You may provide your own aeron Context or otherwise one will be created from defaults
+func NewArchiveV1(options *Options, context *aeron.Context) (*Archive, error) {
+	var err error
+
+	archive := new(Archive)
+	archive.aeron = new(aeron.Aeron)
+	archive.aeronContext = context
+
+	defer func() {
+		if err != nil {
+			archive.Close()
+		}
+	}()
+
+	// Use the provided options or use our defaults
+	if options != nil {
+		archive.Options = options
+	} else {
+		if archive.Options == nil {
+			// Create a new set
+			archive.Options = DefaultOptions()
+		}
+	}
+
+	// Set RangeChecking
+	rangeChecking = archive.Options.RangeChecking
+
+	// Set the logging levels
+	logging.SetLevel(archive.Options.ArchiveLoglevel, "archive")
+	logging.SetLevel(archive.Options.AeronLoglevel, "aeron")
+	logging.SetLevel(archive.Options.AeronLoglevel, "memmap")
+	logging.SetLevel(archive.Options.AeronLoglevel, "driver")
+	logging.SetLevel(archive.Options.AeronLoglevel, "counters")
+	logging.SetLevel(archive.Options.AeronLoglevel, "logbuffers")
+	logging.SetLevel(archive.Options.AeronLoglevel, "buffer")
+	logging.SetLevel(archive.Options.AeronLoglevel, "rb")
+
+	// Setup the Control (subscriber/response)
+	archive.Control = new(Control)
+	archive.Control.archive = archive
+
+	// Setup the Proxy (publisher/request)
+	archive.Proxy = new(Proxy)
+	archive.Proxy.marshaller = codecs.NewSbeGoMarshaller()
+
+	// Setup Recording Events (although it's not enabled by default)
+	archive.Events = new(RecordingEventsAdapter)
+	archive.Events.archive = archive
+
+	// Create the listeners and populate
+	archive.Listeners = new(ArchiveListeners)
+	archive.Listeners.ErrorListener = LoggingErrorListener
+
+	// In Debug mode initialize our listeners with simple loggers
+	// Note that these actually log at INFO so you can do this manually for INFO if you like
+	if logging.GetLevel("archive") >= logging.DEBUG {
+		logger.Debugf("Setting logging listeners")
+
+		archive.Listeners.RecordingEventStartedListener = LoggingRecordingEventStartedListener
+		archive.Listeners.RecordingEventProgressListener = LoggingRecordingEventProgressListener
+		archive.Listeners.RecordingEventStoppedListener = LoggingRecordingEventStoppedListener
+
+		archive.Listeners.RecordingSignalListener = LoggingRecordingSignalListener
+
+		archive.Listeners.AvailableImageListener = LoggingAvailableImageListener
+		archive.Listeners.UnavailableImageListener = LoggingUnavailableImageListener
+
+		archive.Listeners.NewSubscriptionListener = LoggingNewSubscriptionListener
+		archive.Listeners.NewPublicationListener = LoggingNewPublicationListener
+
+		archive.aeronContext.NewSubscriptionHandler(archive.Listeners.NewSubscriptionListener)
+		archive.aeronContext.NewPublicationHandler(archive.Listeners.NewPublicationListener)
+	}
+
+	// Connect the underlying aeron
+	archive.aeron, err = aeron.Connect(archive.aeronContext)
+	if err != nil {
+		return nil, err
+	}
+
+	// and then the subscription, it's poller and initiate a connection
+	sub, err := archive.aeron.AddSubscription(archive.Options.ResponseChannel, archive.Options.ResponseStream)
+	if err != nil {
+		return nil, err
+	}
+	archive.Control.Subscription = sub
+	logger.Debugf("Control response subscription: %#v", archive.Control.Subscription)
+
+	archive.Control.controlResponsePoller = NewControlResponsePoller(sub, ControlFragmentLimit)
+
+	start := time.Now()
+	responseChannel := archive.Control.Subscription.TryResolveChannelEndpointPort()
+	for responseChannel == "" {
+		archive.Options.IdleStrategy.Idle(0)
+		responseChannel = archive.Control.Subscription.TryResolveChannelEndpointPort()
+		if time.Since(start) > archive.Options.Timeout {
+			err = fmt.Errorf("Resolving channel endpoint for %s failed", archive.Control.Subscription.Channel())
+			logger.Errorf(err.Error())
+			return nil, err
+		}
+	}
+
+	// Create the publication half for the proxy that looks after sending requests on that
+	pub, err := archive.aeron.AddExclusivePublication(archive.Options.RequestChannel, archive.Options.RequestStream)
+	if err != nil {
+		return nil, err
+	}
+	archive.Proxy.Publication = pub
+	logger.Debugf("Proxy request publication: %#v", archive.Proxy.Publication)
+
+	// And intitiate the connection
+	//archive.Control.State.state = ControlStateConnectRequestSent
+	correlationID := nextCorrelationID()
+	logger.Debugf("NewArchive correlationID is %d", correlationID)
+	correlations.Store(correlationID, archive.Control) // For subsequent lookup in the fragment assemblers
+	defer correlations.Delete(correlationID)           // Clear the lookup
+
+	// Use Auth if requested
+	if archive.Options.AuthEnabled {
+		if err = archive.Proxy.AuthConnectRequest(correlationID, archive.Options.ResponseStream, responseChannel, archive.Options.AuthCredentials); err != nil {
+			logger.Errorf("AuthConnectRequest failed: %s", err)
+			return nil, err
+		}
+	} else {
+		logger.Debugf("responseChannel=%s", responseChannel)
+		logger.Debugf("correlationID=%d, responseStream=%d, responseChannel=%s", correlationID, archive.Options.ResponseStream, responseChannel)
+		if err = archive.Proxy.ConnectRequest(correlationID, archive.Options.ResponseStream, responseChannel); err != nil {
+			logger.Errorf("ConnectRequest failed: %s", err)
+			return nil, err
+		}
+	}
+
+	start = time.Now()
+	//pollContext := PollContext{archive.Control, correlationID}
+
+	/*
+		for archive.Control.State.state != ControlStateConnected && archive.Control.State.err == nil {
+			fragments := archive.Control.poll(
+				func(buf *atomic.Buffer, offset int32, length int32, header *logbuffer.Header) term.ControlledPollAction {
+					ConnectionControlFragmentHandler(&pollContext, buf, offset, length, header)
+					return term.ControlledPollActionContinue
+				}, 1)
+			if fragments > 0 {
+				logger.Debugf("Read %d fragment(s)", fragments)
+			}
+
+			// Check for timeout
+			if time.Since(start) > archive.Options.Timeout {
+				archive.Control.State.state = ControlStateTimedOut
+				archive.Control.State.err = fmt.Errorf("operation timed out")
+				break
+			} else {
+				archive.Options.IdleStrategy.Idle(0)
+			}
+		}
+
+		if err = archive.Control.State.err; err != nil {
+			logger.Errorf("Connect failed: %s", err)
+			return nil, err
+		} else if archive.Control.State.state != ControlStateConnected {
+			logger.Error("Connect failed")
+		} else {
+			logger.Infof("Archive connection established for sessionId:%d", archive.SessionID)
+		}
+	*/
+
+	pollContext := PollContext{archive.Control, correlationID}
+
+	for archive.Control.State.state != ControlStateConnected && archive.Control.State.err == nil {
+		fragments := archive.Control.poll(
+			func(buf *atomic.Buffer, offset int32, length int32, header *logbuffer.Header) term.ControlledPollAction {
+				ConnectionControlFragmentHandler(&pollContext, buf, offset, length, header)
+				return term.ControlledPollActionContinue
+			}, 1)
+		if fragments > 0 {
+			logger.Debugf("Read %d fragment(s)", fragments)
+		}
+
+		// Check for timeout
+		if time.Since(start) > archive.Options.Timeout {
+			archive.Control.State.state = ControlStateTimedOut
+			archive.Control.State.err = fmt.Errorf("operation timed out")
+			break
+		} else {
+			archive.Options.IdleStrategy.Idle(0)
+		}
+	}
+
+	if err = archive.Control.State.err; err != nil {
+		logger.Errorf("Connect failed: %s", err)
+		return nil, err
+	} else if archive.Control.State.state != ControlStateConnected {
+		logger.Error("Connect failed")
+	} else {
+		logger.Infof("Archive connection established for sessionId:%d", archive.SessionID)
+	}
+	return archive, archive.Control.State.err
+
+	// poller := archive.Control.controlResponsePoller
+	// for {
+	// 	poller.Poll()
+	// 	if poller.ArchiveError != nil {
+	// 		return nil, poller.ArchiveError
+	// 	}
+
+	// 	if poller.IsPollComplete && poller.CorrelationId == correlationID {
+	// 		if poller.Code != codecs.ControlResponseCode.OK {
+	// 			return nil, fmt.Errorf("fucked")
+	// 		}
+	// 		logger.Debugf("doneeee")
+	// 		return archive, nil
+	// 	}
+
+	// 	if time.Since(start) > archive.Options.Timeout {
+	// 		return nil, fmt.Errorf("timedout")
+	// 	}
+
+	// 	archive.Options.IdleStrategy.Idle(0)
+	// }
+
+	return archive, nil
+}
+
+func NewArchiveV2(archiveContext *ArchiveContext, controlResponsePoller *ControlResponsePoller, archiveProxy *Proxy, controlSessionId, archiveId int64) (aeronArchive *Archive) {
+	aeronArchive = new(Archive)
+	aeronArchive.aeronContext = archiveContext.AeronCtx
+	aeronArchive.aeron = archiveContext.Aeron
+	aeronArchive.ArchiveId = archiveId
+	aeronArchive.SessionID = controlSessionId
+
+	// Use the provided options or use our defaults
+	if archiveContext.ArchiveOptions != nil {
+		aeronArchive.Options = archiveContext.ArchiveOptions
+	} else {
+		if aeronArchive.Options == nil {
+			// Create a new set
+			aeronArchive.Options = DefaultOptions()
+		}
+	}
+
+	// Set RangeChecking
+	rangeChecking = aeronArchive.Options.RangeChecking
+
+	// Set the logging levels
+	logging.SetLevel(aeronArchive.Options.ArchiveLoglevel, "archive")
+	logging.SetLevel(aeronArchive.Options.AeronLoglevel, "aeron")
+	logging.SetLevel(aeronArchive.Options.AeronLoglevel, "memmap")
+	logging.SetLevel(aeronArchive.Options.AeronLoglevel, "driver")
+	logging.SetLevel(aeronArchive.Options.AeronLoglevel, "counters")
+	logging.SetLevel(aeronArchive.Options.AeronLoglevel, "logbuffers")
+	logging.SetLevel(aeronArchive.Options.AeronLoglevel, "buffer")
+	logging.SetLevel(aeronArchive.Options.AeronLoglevel, "rb")
+
+	// Setup the Control (subscriber/response)
+	aeronArchive.Control = new(Control)
+	aeronArchive.Control.Subscription = controlResponsePoller.Subscription
+	aeronArchive.Control.controlResponsePoller = controlResponsePoller
+	aeronArchive.Control.archive = aeronArchive
+
+	// Setup the Proxy (publisher/request)
+	aeronArchive.Proxy = archiveProxy
+
+	// Setup Recording Events (although it's not enabled by default)
+	aeronArchive.Events = new(RecordingEventsAdapter)
+	aeronArchive.Events.archive = aeronArchive
+
+	// Create the listeners and populate
+	aeronArchive.Listeners = new(ArchiveListeners)
+	aeronArchive.Listeners.ErrorListener = LoggingErrorListener
+
+	// In Debug mode initialize our listeners with simple loggers
+	// Note that these actually log at INFO so you can do this manually for INFO if you like
+	if logging.GetLevel("aeronArchive") >= logging.DEBUG {
+		logger.Debugf("Setting logging listeners")
+
+		aeronArchive.Listeners.RecordingEventStartedListener = LoggingRecordingEventStartedListener
+		aeronArchive.Listeners.RecordingEventProgressListener = LoggingRecordingEventProgressListener
+		aeronArchive.Listeners.RecordingEventStoppedListener = LoggingRecordingEventStoppedListener
+
+		aeronArchive.Listeners.RecordingSignalListener = LoggingRecordingSignalListener
+
+		aeronArchive.Listeners.AvailableImageListener = LoggingAvailableImageListener
+		aeronArchive.Listeners.UnavailableImageListener = LoggingUnavailableImageListener
+
+		aeronArchive.Listeners.NewSubscriptionListener = LoggingNewSubscriptionListener
+		aeronArchive.Listeners.NewPublicationListener = LoggingNewPublicationListener
+
+		aeronArchive.aeronContext.NewSubscriptionHandler(aeronArchive.Listeners.NewSubscriptionListener)
+		aeronArchive.aeronContext.NewPublicationHandler(aeronArchive.Listeners.NewPublicationListener)
+	}
+
+	return
+}
+
+func Connect(ctx *ArchiveContext) (aeronArchive *Archive, err error) {
+	asyncConnect, err := NewAsyncConnect(ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	previousState := asyncConnect.State
+
+	for aeronArchive == nil {
+		aeronArchive, err = asyncConnect.Poll()
+		if err != nil {
+			return nil, err
+		}
+
+		if asyncConnect.State == previousState {
+			asyncConnect.Ctx.IdleStrategy.Idle(0)
+		} else {
+			logger.Infof("archive asyncConnect state transition: %d -> %d", previousState, asyncConnect.State)
+			asyncConnect.Ctx.IdleStrategy.Idle(1)
+			previousState = asyncConnect.State
+		}
+	}
+
+	return
+}
+
 // Close will terminate client conductor and remove all publications and subscriptions from the media driver
 func (archive *Archive) Close() error {
 	archive.mtx.Lock()
 	defer archive.mtx.Unlock()
 
 	if archive.Proxy.Publication != nil {
-		archive.Proxy.CloseSessionRequest()
+		archive.Proxy.CloseSessionRequest(archive.SessionID)
 		archive.Proxy.Publication.Close()
 	}
 
@@ -508,7 +831,7 @@ func (archive *Archive) StartRecording(channel string, stream int32, isLocal boo
 
 	archive.mtx.Lock()
 	defer archive.mtx.Unlock()
-	if err := archive.Proxy.StartRecordingRequest(correlationID, stream, isLocal, autoStop, channel); err != nil {
+	if err := archive.Proxy.StartRecordingRequest(correlationID, stream, isLocal, autoStop, channel, archive.SessionID); err != nil {
 		return 0, err
 	}
 	return archive.Control.PollForResponse(correlationID, archive.SessionID)
@@ -530,7 +853,7 @@ func (archive *Archive) StopRecording(channel string, stream int32) error {
 
 	archive.mtx.Lock()
 	defer archive.mtx.Unlock()
-	if err := archive.Proxy.StopRecordingRequest(correlationID, stream, channel); err != nil {
+	if err := archive.Proxy.StopRecordingRequest(correlationID, stream, channel, archive.SessionID); err != nil {
 		return err
 	}
 	_, err := archive.Control.PollForResponse(correlationID, archive.SessionID)
@@ -549,7 +872,7 @@ func (archive *Archive) StopRecordingByIdentity(recordingID int64) (bool, error)
 
 	archive.mtx.Lock()
 	defer archive.mtx.Unlock()
-	if err := archive.Proxy.StopRecordingByIdentityRequest(correlationID, recordingID); err != nil {
+	if err := archive.Proxy.StopRecordingByIdentityRequest(correlationID, recordingID, archive.SessionID); err != nil {
 		return false, err
 	}
 	res, err := archive.Control.PollForResponse(correlationID, archive.SessionID)
@@ -579,7 +902,7 @@ func (archive *Archive) StopRecordingBySubscriptionId(subscriptionID int64) erro
 
 	archive.mtx.Lock()
 	defer archive.mtx.Unlock()
-	if err := archive.Proxy.StopRecordingSubscriptionRequest(correlationID, subscriptionID); err != nil {
+	if err := archive.Proxy.StopRecordingSubscriptionRequest(correlationID, subscriptionID, archive.SessionID); err != nil {
 		return err
 	}
 	_, err := archive.Control.PollForResponse(correlationID, archive.SessionID)
@@ -631,7 +954,7 @@ func (archive *Archive) AddRecordedPublication(channel string, stream int32) (*a
 
 	archive.mtx.Lock()
 	defer archive.mtx.Unlock()
-	if err := archive.Proxy.StartRecordingRequest(correlationID, stream, true, false, sessionChannel); err != nil {
+	if err := archive.Proxy.StartRecordingRequest(correlationID, stream, true, false, sessionChannel, archive.SessionID); err != nil {
 		publication.Close()
 		return nil, err
 	}
@@ -654,27 +977,16 @@ func (archive *Archive) ListRecordings(fromRecordingID int64, recordCount int32)
 
 	archive.mtx.Lock()
 	defer archive.mtx.Unlock()
-	if err := archive.Proxy.ListRecordingsRequest(correlationID, fromRecordingID, recordCount); err != nil {
-		return nil, err
-	}
-	if err := archive.Control.PollForDescriptors(correlationID, archive.SessionID, recordCount); err != nil {
+	if err := archive.Proxy.ListRecordingsRequest(correlationID, fromRecordingID, recordCount, archive.SessionID); err != nil {
 		return nil, err
 	}
 
-	// If there's a ControlResponse let's see what transpired
-	response := archive.Control.Results.ControlResponse
-	if response != nil {
-		switch response.Code {
-		case codecs.ControlResponseCode.ERROR:
-			return nil, fmt.Errorf("response for correlationID %d (relevantId %d) failed %s", response.CorrelationId, response.RelevantId, response.ErrorMessage)
-
-		case codecs.ControlResponseCode.RECORDING_UNKNOWN:
-			return archive.Control.Results.RecordingDescriptors, nil
-		}
+	var descriptors []*codecs.RecordingDescriptor
+	if _, err := archive.Control.PollForDescriptors(correlationID, 1, archive.Control.AppendingRecordingDescriptorConsumer(&descriptors)); err != nil {
+		return nil, err
 	}
-
 	// Otherwise we can return our results
-	return archive.Control.Results.RecordingDescriptors, nil
+	return descriptors, nil
 }
 
 // ListRecordingsForUri will list up to recordCount recording descriptors from fromRecordingID
@@ -690,28 +1002,16 @@ func (archive *Archive) ListRecordingsForUri(fromRecordingID int64, recordCount 
 
 	archive.mtx.Lock()
 	defer archive.mtx.Unlock()
-	if err := archive.Proxy.ListRecordingsForUriRequest(correlationID, fromRecordingID, recordCount, stream, channelFragment); err != nil {
+	if err := archive.Proxy.ListRecordingsForUriRequest(correlationID, fromRecordingID, recordCount, stream, channelFragment, archive.SessionID); err != nil {
 		return nil, err
 	}
 
-	if err := archive.Control.PollForDescriptors(correlationID, archive.SessionID, recordCount); err != nil {
+	var descriptors []*codecs.RecordingDescriptor
+	if _, err := archive.Control.PollForDescriptors(correlationID, 1, archive.Control.AppendingRecordingDescriptorConsumer(&descriptors)); err != nil {
 		return nil, err
 	}
-
-	// If there's a ControlResponse let's see what transpired
-	response := archive.Control.Results.ControlResponse
-	if response != nil {
-		switch response.Code {
-		case codecs.ControlResponseCode.ERROR:
-			return nil, fmt.Errorf("response for correlationID %d (relevantId %d) failed %s", response.CorrelationId, response.RelevantId, response.ErrorMessage)
-
-		case codecs.ControlResponseCode.RECORDING_UNKNOWN:
-			return archive.Control.Results.RecordingDescriptors, nil
-		}
-	}
-
 	// Otherwise we can return our results
-	return archive.Control.Results.RecordingDescriptors, nil
+	return descriptors, nil
 }
 
 // ListRecording will fetch the recording descriptor for a recordingID
@@ -725,27 +1025,20 @@ func (archive *Archive) ListRecording(recordingID int64) (*codecs.RecordingDescr
 
 	archive.mtx.Lock()
 	defer archive.mtx.Unlock()
-	if err := archive.Proxy.ListRecordingRequest(correlationID, recordingID); err != nil {
-		return nil, err
-	}
-	if err := archive.Control.PollForDescriptors(correlationID, archive.SessionID, 1); err != nil {
+	if err := archive.Proxy.ListRecordingRequest(correlationID, recordingID, archive.SessionID); err != nil {
 		return nil, err
 	}
 
-	// If there's a ControlResponse let's see what transpired
-	response := archive.Control.Results.ControlResponse
-	if response != nil {
-		switch response.Code {
-		case codecs.ControlResponseCode.ERROR:
-			return nil, fmt.Errorf("response for correlationID %d (relevantId %d) failed %s", response.CorrelationId, response.RelevantId, response.ErrorMessage)
-
-		case codecs.ControlResponseCode.RECORDING_UNKNOWN:
-			return nil, nil
-		}
+	var descriptors []*codecs.RecordingDescriptor
+	count, err := archive.Control.PollForDescriptors(correlationID, 1, archive.Control.AppendingRecordingDescriptorConsumer(&descriptors))
+	if err != nil {
+		return nil, err
 	}
-
 	// Otherwise we can return our results
-	return archive.Control.Results.RecordingDescriptors[0], nil
+	if count > 0 {
+		return descriptors[0], nil
+	}
+	return nil, nil
 }
 
 // StartReplay for a length in bytes of a recording from a position.
@@ -774,7 +1067,7 @@ func (archive *Archive) StartReplay(recordingID int64, position int64, length in
 
 	archive.mtx.Lock()
 	defer archive.mtx.Unlock()
-	if err := archive.Proxy.ReplayRequest(correlationID, recordingID, position, length, replayChannel, replayStream); err != nil {
+	if err := archive.Proxy.ReplayRequest(correlationID, recordingID, position, length, replayChannel, replayStream, archive.SessionID); err != nil {
 		return 0, err
 	}
 
@@ -807,7 +1100,7 @@ func (archive *Archive) BoundedReplay(recordingID int64, position int64, length 
 
 	archive.mtx.Lock()
 	defer archive.mtx.Unlock()
-	if err := archive.Proxy.BoundedReplayRequest(correlationID, recordingID, position, length, limitCounterID, replayStream, replayChannel); err != nil {
+	if err := archive.Proxy.BoundedReplayRequest(correlationID, recordingID, position, length, limitCounterID, replayStream, replayChannel, archive.SessionID); err != nil {
 		return 0, err
 	}
 
@@ -825,7 +1118,7 @@ func (archive *Archive) StopReplay(replaySessionID int64) error {
 
 	archive.mtx.Lock()
 	defer archive.mtx.Unlock()
-	if err := archive.Proxy.StopReplayRequest(correlationID, replaySessionID); err != nil {
+	if err := archive.Proxy.StopReplayRequest(correlationID, replaySessionID, archive.SessionID); err != nil {
 		return err
 	}
 
@@ -844,7 +1137,7 @@ func (archive *Archive) StopAllReplays(recordingID int64) error {
 
 	archive.mtx.Lock()
 	defer archive.mtx.Unlock()
-	if err := archive.Proxy.StopAllReplaysRequest(correlationID, recordingID); err != nil {
+	if err := archive.Proxy.StopAllReplaysRequest(correlationID, recordingID, archive.SessionID); err != nil {
 		return err
 	}
 
@@ -865,7 +1158,7 @@ func (archive *Archive) ExtendRecording(recordingID int64, stream int32, sourceL
 
 	archive.mtx.Lock()
 	defer archive.mtx.Unlock()
-	if err := archive.Proxy.ExtendRecordingRequest(correlationID, recordingID, stream, sourceLocation, autoStop, channel); err != nil {
+	if err := archive.Proxy.ExtendRecordingRequest(correlationID, recordingID, stream, sourceLocation, autoStop, channel, archive.SessionID); err != nil {
 		return 0, err
 	}
 
@@ -884,7 +1177,7 @@ func (archive *Archive) GetRecordingPosition(recordingID int64) (int64, error) {
 
 	archive.mtx.Lock()
 	defer archive.mtx.Unlock()
-	if err := archive.Proxy.RecordingPositionRequest(correlationID, recordingID); err != nil {
+	if err := archive.Proxy.RecordingPositionRequest(correlationID, recordingID, archive.SessionID); err != nil {
 		return 0, err
 	}
 
@@ -909,7 +1202,7 @@ func (archive *Archive) TruncateRecording(recordingID int64, position int64) err
 
 	archive.mtx.Lock()
 	defer archive.mtx.Unlock()
-	if err := archive.Proxy.TruncateRecordingRequest(correlationID, recordingID, position); err != nil {
+	if err := archive.Proxy.TruncateRecordingRequest(correlationID, recordingID, position, archive.SessionID); err != nil {
 		return err
 	}
 
@@ -928,7 +1221,7 @@ func (archive *Archive) GetStartPosition(recordingID int64) (int64, error) {
 
 	archive.mtx.Lock()
 	defer archive.mtx.Unlock()
-	if err := archive.Proxy.StartPositionRequest(correlationID, recordingID); err != nil {
+	if err := archive.Proxy.StartPositionRequest(correlationID, recordingID, archive.SessionID); err != nil {
 		return 0, err
 	}
 
@@ -946,7 +1239,7 @@ func (archive *Archive) GetStopPosition(recordingID int64) (int64, error) {
 
 	archive.mtx.Lock()
 	defer archive.mtx.Unlock()
-	if err := archive.Proxy.StopPositionRequest(correlationID, recordingID); err != nil {
+	if err := archive.Proxy.StopPositionRequest(correlationID, recordingID, archive.SessionID); err != nil {
 		return 0, err
 	}
 
@@ -964,7 +1257,7 @@ func (archive *Archive) FindLastMatchingRecording(minRecordingID int64, sessionI
 
 	archive.mtx.Lock()
 	defer archive.mtx.Unlock()
-	if err := archive.Proxy.FindLastMatchingRecordingRequest(correlationID, minRecordingID, sessionID, stream, channel); err != nil {
+	if err := archive.Proxy.FindLastMatchingRecordingRequest(correlationID, minRecordingID, sessionID, stream, channel, archive.SessionID); err != nil {
 		return 0, err
 	}
 
@@ -984,29 +1277,17 @@ func (archive *Archive) ListRecordingSubscriptions(pseudoIndex int32, subscripti
 
 	archive.mtx.Lock()
 	defer archive.mtx.Unlock()
-	if err := archive.Proxy.ListRecordingSubscriptionsRequest(correlationID, pseudoIndex, subscriptionCount, applyStreamID, stream, channelFragment); err != nil {
+	if err := archive.Proxy.ListRecordingSubscriptionsRequest(correlationID, pseudoIndex, subscriptionCount, applyStreamID, stream, channelFragment, archive.SessionID); err != nil {
 		return nil, err
 	}
 
-	if err := archive.Control.PollForDescriptors(correlationID, archive.SessionID, subscriptionCount); err != nil {
+	var descriptors []*codecs.RecordingSubscriptionDescriptor
+	if _, err := archive.Control.PollForSubscriptionDescriptors(correlationID, subscriptionCount, archive.Control.AppendRecordingSubscriptionDescriptorConsumer(&descriptors)); err != nil {
 		return nil, err
-	}
-
-	// If there's a ControlResponse let's see what transpired
-	response := archive.Control.Results.ControlResponse
-	if response != nil {
-		switch response.Code {
-		case codecs.ControlResponseCode.ERROR:
-			return nil, fmt.Errorf("response for correlationID %d (relevantId %d) failed %s", response.CorrelationId, response.RelevantId, response.ErrorMessage)
-
-		case codecs.ControlResponseCode.SUBSCRIPTION_UNKNOWN:
-			return archive.Control.Results.RecordingSubscriptionDescriptors, nil
-		}
 	}
 
 	// Otherwise we can return our results
-	return archive.Control.Results.RecordingSubscriptionDescriptors, nil
-
+	return descriptors, nil
 }
 
 // DetachSegments from the beginning of a recording up to the
@@ -1024,7 +1305,7 @@ func (archive *Archive) DetachSegments(recordingID int64, newStartPosition int64
 
 	archive.mtx.Lock()
 	defer archive.mtx.Unlock()
-	if err := archive.Proxy.DetachSegmentsRequest(correlationID, recordingID, newStartPosition); err != nil {
+	if err := archive.Proxy.DetachSegmentsRequest(correlationID, recordingID, newStartPosition, archive.SessionID); err != nil {
 		return err
 	}
 
@@ -1043,7 +1324,7 @@ func (archive *Archive) DeleteDetachedSegments(recordingID int64) (int64, error)
 
 	archive.mtx.Lock()
 	defer archive.mtx.Unlock()
-	if err := archive.Proxy.DeleteDetachedSegmentsRequest(correlationID, recordingID); err != nil {
+	if err := archive.Proxy.DeleteDetachedSegmentsRequest(correlationID, recordingID, archive.SessionID); err != nil {
 		return 0, err
 	}
 
@@ -1065,7 +1346,7 @@ func (archive *Archive) PurgeSegments(recordingID int64, newStartPosition int64)
 
 	archive.mtx.Lock()
 	defer archive.mtx.Unlock()
-	if err := archive.Proxy.PurgeSegmentsRequest(correlationID, recordingID, newStartPosition); err != nil {
+	if err := archive.Proxy.PurgeSegmentsRequest(correlationID, recordingID, newStartPosition, archive.SessionID); err != nil {
 		return 0, err
 	}
 
@@ -1086,7 +1367,7 @@ func (archive *Archive) AttachSegments(recordingID int64) (int64, error) {
 
 	archive.mtx.Lock()
 	defer archive.mtx.Unlock()
-	if err := archive.Proxy.AttachSegmentsRequest(correlationID, recordingID); err != nil {
+	if err := archive.Proxy.AttachSegmentsRequest(correlationID, recordingID, archive.SessionID); err != nil {
 		return 0, err
 	}
 
@@ -1114,7 +1395,7 @@ func (archive *Archive) MigrateSegments(recordingID int64, position int64) (int6
 
 	archive.mtx.Lock()
 	defer archive.mtx.Unlock()
-	if err := archive.Proxy.MigrateSegmentsRequest(correlationID, recordingID, position); err != nil {
+	if err := archive.Proxy.MigrateSegmentsRequest(correlationID, recordingID, position, archive.SessionID); err != nil {
 		return 0, err
 	}
 
@@ -1128,7 +1409,7 @@ func (archive *Archive) KeepAlive() error {
 	correlationID := nextCorrelationID()
 	logger.Debugf("KeepAlive(), correlationID:%d", correlationID)
 
-	return archive.Proxy.KeepAliveRequest(correlationID)
+	return archive.Proxy.KeepAliveRequest(correlationID, archive.SessionID)
 }
 
 // Replicate a recording from a source archive to a destination which
@@ -1160,7 +1441,7 @@ func (archive *Archive) Replicate(srcRecordingID int64, dstRecordingID int64, sr
 
 	archive.mtx.Lock()
 	defer archive.mtx.Unlock()
-	if err := archive.Proxy.ReplicateRequest(correlationID, srcRecordingID, dstRecordingID, srcControlStreamID, srcControlChannel, liveDestination); err != nil {
+	if err := archive.Proxy.ReplicateRequest(correlationID, srcRecordingID, dstRecordingID, srcControlStreamID, srcControlChannel, liveDestination, archive.SessionID); err != nil {
 		return 0, err
 	}
 
@@ -1198,7 +1479,7 @@ func (archive *Archive) Replicate2(srcRecordingID int64, dstRecordingID int64, s
 
 	archive.mtx.Lock()
 	defer archive.mtx.Unlock()
-	if err := archive.Proxy.ReplicateRequest2(correlationID, srcRecordingID, dstRecordingID, stopPosition, channelTagID, srcControlStreamID, srcControlChannel, liveDestination, replicationChannel); err != nil {
+	if err := archive.Proxy.ReplicateRequest2(correlationID, srcRecordingID, dstRecordingID, stopPosition, channelTagID, srcControlStreamID, srcControlChannel, liveDestination, replicationChannel, archive.SessionID); err != nil {
 		return 0, err
 	}
 
@@ -1237,7 +1518,7 @@ func (archive *Archive) TaggedReplicate(srcRecordingID int64, dstRecordingID int
 
 	archive.mtx.Lock()
 	defer archive.mtx.Unlock()
-	if err := archive.Proxy.TaggedReplicateRequest(correlationID, srcRecordingID, dstRecordingID, channelTagID, subscriptionTagID, srcControlStreamID, srcControlChannel, liveDestination); err != nil {
+	if err := archive.Proxy.TaggedReplicateRequest(correlationID, srcRecordingID, dstRecordingID, channelTagID, subscriptionTagID, srcControlStreamID, srcControlChannel, liveDestination, archive.SessionID); err != nil {
 		return 0, err
 	}
 
@@ -1255,7 +1536,7 @@ func (archive *Archive) StopReplication(replicationID int64) error {
 
 	archive.mtx.Lock()
 	defer archive.mtx.Unlock()
-	if err := archive.Proxy.StopReplicationRequest(correlationID, replicationID); err != nil {
+	if err := archive.Proxy.StopReplicationRequest(correlationID, replicationID, archive.SessionID); err != nil {
 		return err
 	}
 
@@ -1276,7 +1557,7 @@ func (archive *Archive) PurgeRecording(recordingID int64) error {
 
 	archive.mtx.Lock()
 	defer archive.mtx.Unlock()
-	if err := archive.Proxy.PurgeRecordingRequest(correlationID, recordingID); err != nil {
+	if err := archive.Proxy.PurgeRecordingRequest(correlationID, recordingID, archive.SessionID); err != nil {
 		return err
 	}
 
