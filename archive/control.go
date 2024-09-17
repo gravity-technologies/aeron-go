@@ -432,7 +432,8 @@ func (control *Control) errorResponseFragmentHandler(buffer *atomic.Buffer, offs
 		// If this was for us then check for errors
 		if controlResponse.ControlSessionId == pollContext.control.archive.SessionID {
 			if controlResponse.Code == codecs.ControlResponseCode.ERROR {
-				pollContext.control.Results.ErrorResponse = fmt.Errorf("PollForErrorResponse received a ControlResponse (correlationId:%d Code:ERROR error=\"%s\"", controlResponse.CorrelationId, controlResponse.ErrorMessage)
+				archiveErr := NewArchiveError(controlResponse.CorrelationId, int(controlResponse.RelevantId), fmt.Sprintf("PollForErrorResponse received a ControlResponse (correlationId:%d Code:ERROR error=\"%s\"", controlResponse.CorrelationId, controlResponse.ErrorMessage))
+				pollContext.control.Results.ErrorResponse = archiveErr
 				return term.ControlledPollActionBreak
 			}
 		}

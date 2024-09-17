@@ -29,6 +29,12 @@ import (
 	"github.com/lirm/aeron-go/archive/codecs"
 )
 
+func skipArchiveMainTest(t *testing.M) {
+	if os.Getenv("ENABLE_ARCHIVE_MAIN_TEST") == "" {
+		os.Exit(t.Run())
+	}
+}
+
 // Rather than mock or spawn an archive-media-driver we're just seeing
 // if we can connect to one and if we can we'll run some tests. If the
 // init fails to connect then we'll skip the tests
@@ -76,6 +82,8 @@ func RecordingEventStoppedListener(rs *codecs.RecordingStopped) {
 
 func TestMain(m *testing.M) {
 	flag.Parse()
+
+	skipArchiveMainTest(m)
 
 	var err error
 	context := aeron.NewContext()
