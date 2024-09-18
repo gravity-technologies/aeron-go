@@ -123,17 +123,16 @@ func TestControl_PollForErrorResponse(t *testing.T) {
 		assert.EqualError(t, err, `archive error: PollForErrorResponse received a ControlResponse (correlationId:0 Code:ERROR error="b0rk")`)
 	})
 
-	// PollForErrorResponse is single poll read now and not draining the queue
-	// t.Run("discards all queued responses unless error", func(t *testing.T) {
-	// 	control, image := newTestControl(t)
-	// 	mockPollResponses(t, control, image, true,
-	// 		&codecs.ControlResponse{Code: codecs.ControlResponseCode.OK},
-	// 		&codecs.ControlResponse{Code: codecs.ControlResponseCode.OK},
-	// 	)
-	// 	cnt, err := control.PollForErrorResponse()
-	// 	assert.EqualValues(t, 2, cnt)
-	// 	assert.NoError(t, err)
-	// })
+	t.Run("discards all queued responses unless error", func(t *testing.T) {
+		control, image := newTestControl(t)
+		mockPollResponses(t, control, image, true,
+			&codecs.ControlResponse{Code: codecs.ControlResponseCode.OK},
+			&codecs.ControlResponse{Code: codecs.ControlResponseCode.OK},
+		)
+		cnt, err := control.PollForErrorResponse()
+		assert.EqualValues(t, -1, cnt)
+		assert.NoError(t, err)
+	})
 
 	t.Run("does not process messages after error", func(t *testing.T) {
 		control, image := newTestControl(t)
