@@ -112,6 +112,7 @@ type CodecIds struct {
 	recordingStarted                uint16
 	recordingProgress               uint16
 	recordingStopped                uint16
+	schemaId                        uint16
 }
 
 var codecIds CodecIds
@@ -134,6 +135,7 @@ func init() {
 	codecIds.recordingStarted = recordingStarted.SbeTemplateId()
 	codecIds.recordingProgress = recordingProgress.SbeTemplateId()
 	codecIds.recordingStopped = recordingStopped.SbeTemplateId()
+	codecIds.schemaId = controlResponse.SbeSchemaId()
 }
 
 func controlFragmentHandler(context interface{}, buffer *atomic.Buffer, offset int32, length int32, header *logbuffer.Header) (action term.ControlledPollAction) {
