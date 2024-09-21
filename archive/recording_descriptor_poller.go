@@ -32,17 +32,17 @@ type RecordingDescriptorPoller struct {
 
 func NewRecordingDescriptorPoller(
 	subbscription *aeron.Subscription,
-	controlSessionId int64,
 	errorHandler func(error),
-	recordingDescriptorConsumer func(*codecs.RecordingDescriptor),
 	recordingSignalConsumer func(*codecs.RecordingSignalEvent),
+	controlSessionId int64,
+	fragmentLimit int,
 ) *RecordingDescriptorPoller {
 	poller := &RecordingDescriptorPoller{}
 	poller.ControlSessionId = controlSessionId
+	poller.FragmentLimit = fragmentLimit
 	poller.fragmentAssembler = aeron.NewControlledFragmentAssembler(
 		poller.OnFragment, aeron.DefaultFragmentAssemblyBufferLength)
 	poller.errorHandler = errorHandler
-	poller.recordingDescriptorConsumer = recordingDescriptorConsumer
 	poller.recordingSignalConsumer = recordingSignalConsumer
 
 	if errorHandler == nil {

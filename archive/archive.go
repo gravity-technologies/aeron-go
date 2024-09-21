@@ -275,8 +275,7 @@ func NewArchive(options *Options, context *aeron.Context) (*Archive, error) {
 	archive.Control.Subscription = sub
 	logger.Debugf("Control response subscription: %#v", archive.Control.Subscription)
 
-	archive.Control.recordingSubscriptionDescriptorPoller = NewRecordingSubscriptionDescriptorPoller(
-		sub, LoggingErrorListener, LoggingRecordingSignalListener, archive.SessionID, ControlFragmentLimit)
+	archive.Control.controlResponsePoller = NewControlResponsePoller(sub, ControlFragmentLimit)
 
 	start := time.Now()
 	responseChannel := archive.Control.Subscription.TryResolveChannelEndpointPort()
