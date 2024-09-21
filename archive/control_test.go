@@ -26,7 +26,7 @@ func TestControl_PollForResponse(t *testing.T) {
 		correlations.Store(int64(1), control)
 		id, err := control.PollForResponse(1, 0)
 		assert.Equal(t, int(id), aeron.NullValue)
-		assert.EqualError(t, err, `timeout waiting for correlationID 1`)
+		assert.EqualError(t, err, `awaiting subscription descriptors - correlationId=1 messageTimeout=100ms`)
 	})
 
 	t.Run("returns the error response", func(t *testing.T) {
@@ -175,7 +175,7 @@ func mockPollResponses(t *testing.T, control *Control, image *aeron.MockImage, i
 		fragmentCount := args.Get(1).(int)
 		var handler term.ControlledFragmentHandler
 		if isErrorResponse {
-			handler = control.fragmentAssembler.OnFragment
+			handler = control.controlResponsePoller.fragmentAssembler.OnFragment
 		} else {
 			handler = args.Get(0).(term.ControlledFragmentHandler)
 		}
@@ -238,10 +238,7 @@ func newTestControl(t *testing.T) (*Control, *aeron.MockImage) {
 			IdleStrategy: idlestrategy.Yielding{},
 		},
 	}
-	c.fragmentAssembler = aeron.NewControlledFragmentAssembler(
-		c.onFragment, aeron.DefaultFragmentAssemblyBufferLength,
-	)
-	c.errorFragmentHandler = c.errorResponseFragmentHandler
+	c.controlResponsePoller = NewControlResponsePoller(c.Subscription, 10)
 	return c, image
 }
 

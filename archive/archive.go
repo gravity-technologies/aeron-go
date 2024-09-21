@@ -210,6 +210,9 @@ func NewArchive(options *Options, context *aeron.Context) (*Archive, error) {
 		}
 	}
 
+	// Set RangeChecking
+	rangeChecking = archive.Options.RangeChecking
+
 	// Set the logging levels
 	logging.SetLevel(archive.Options.ArchiveLoglevel, "archive")
 	logging.SetLevel(archive.Options.AeronLoglevel, "aeron")
@@ -223,9 +226,6 @@ func NewArchive(options *Options, context *aeron.Context) (*Archive, error) {
 	// Setup the Control (subscriber/response)
 	archive.Control = new(Control)
 	archive.Control.archive = archive
-	archive.Control.fragmentAssembler = aeron.NewControlledFragmentAssembler(
-		archive.Control.onFragment, aeron.DefaultFragmentAssemblyBufferLength)
-	archive.Control.errorFragmentHandler = archive.Control.errorResponseFragmentHandler
 
 	// Setup the Proxy (publisher/request)
 	archive.Proxy = new(Proxy)
@@ -274,6 +274,9 @@ func NewArchive(options *Options, context *aeron.Context) (*Archive, error) {
 	}
 	archive.Control.Subscription = sub
 	logger.Debugf("Control response subscription: %#v", archive.Control.Subscription)
+
+	archive.Control.recordingSubscriptionDescriptorPoller = NewRecordingSubscriptionDescriptorPoller(
+		sub, LoggingErrorListener, LoggingRecordingSignalListener, archive.SessionID, ControlFragmentLimit)
 
 	start := time.Now()
 	responseChannel := archive.Control.Subscription.TryResolveChannelEndpointPort()
@@ -657,24 +660,13 @@ func (archive *Archive) ListRecordings(fromRecordingID int64, recordCount int32)
 	if err := archive.Proxy.ListRecordingsRequest(correlationID, fromRecordingID, recordCount); err != nil {
 		return nil, err
 	}
-	if err := archive.Control.PollForDescriptors(correlationID, archive.SessionID, recordCount); err != nil {
+
+	var descriptors []*codecs.RecordingDescriptor
+	if _, err := archive.Control.PollForDescriptors(correlationID, 1, archive.Control.AppendingRecordingDescriptorConsumer(&descriptors)); err != nil {
 		return nil, err
 	}
-
-	// If there's a ControlResponse let's see what transpired
-	response := archive.Control.Results.ControlResponse
-	if response != nil {
-		switch response.Code {
-		case codecs.ControlResponseCode.ERROR:
-			return nil, fmt.Errorf("response for correlationID %d (relevantId %d) failed %s", response.CorrelationId, response.RelevantId, response.ErrorMessage)
-
-		case codecs.ControlResponseCode.RECORDING_UNKNOWN:
-			return archive.Control.Results.RecordingDescriptors, nil
-		}
-	}
-
 	// Otherwise we can return our results
-	return archive.Control.Results.RecordingDescriptors, nil
+	return descriptors, nil
 }
 
 // ListRecordingsForUri will list up to recordCount recording descriptors from fromRecordingID
@@ -694,24 +686,12 @@ func (archive *Archive) ListRecordingsForUri(fromRecordingID int64, recordCount 
 		return nil, err
 	}
 
-	if err := archive.Control.PollForDescriptors(correlationID, archive.SessionID, recordCount); err != nil {
+	var descriptors []*codecs.RecordingDescriptor
+	if _, err := archive.Control.PollForDescriptors(correlationID, 1, archive.Control.AppendingRecordingDescriptorConsumer(&descriptors)); err != nil {
 		return nil, err
 	}
-
-	// If there's a ControlResponse let's see what transpired
-	response := archive.Control.Results.ControlResponse
-	if response != nil {
-		switch response.Code {
-		case codecs.ControlResponseCode.ERROR:
-			return nil, fmt.Errorf("response for correlationID %d (relevantId %d) failed %s", response.CorrelationId, response.RelevantId, response.ErrorMessage)
-
-		case codecs.ControlResponseCode.RECORDING_UNKNOWN:
-			return archive.Control.Results.RecordingDescriptors, nil
-		}
-	}
-
 	// Otherwise we can return our results
-	return archive.Control.Results.RecordingDescriptors, nil
+	return descriptors, nil
 }
 
 // ListRecording will fetch the recording descriptor for a recordingID
@@ -728,24 +708,17 @@ func (archive *Archive) ListRecording(recordingID int64) (*codecs.RecordingDescr
 	if err := archive.Proxy.ListRecordingRequest(correlationID, recordingID); err != nil {
 		return nil, err
 	}
-	if err := archive.Control.PollForDescriptors(correlationID, archive.SessionID, 1); err != nil {
+
+	var descriptors []*codecs.RecordingDescriptor
+	count, err := archive.Control.PollForDescriptors(correlationID, 1, archive.Control.AppendingRecordingDescriptorConsumer(&descriptors))
+	if err != nil {
 		return nil, err
 	}
-
-	// If there's a ControlResponse let's see what transpired
-	response := archive.Control.Results.ControlResponse
-	if response != nil {
-		switch response.Code {
-		case codecs.ControlResponseCode.ERROR:
-			return nil, fmt.Errorf("response for correlationID %d (relevantId %d) failed %s", response.CorrelationId, response.RelevantId, response.ErrorMessage)
-
-		case codecs.ControlResponseCode.RECORDING_UNKNOWN:
-			return nil, nil
-		}
-	}
-
 	// Otherwise we can return our results
-	return archive.Control.Results.RecordingDescriptors[0], nil
+	if count > 0 {
+		return descriptors[0], nil
+	}
+	return nil, nil
 }
 
 // StartReplay for a length in bytes of a recording from a position.
@@ -988,25 +961,13 @@ func (archive *Archive) ListRecordingSubscriptions(pseudoIndex int32, subscripti
 		return nil, err
 	}
 
-	if err := archive.Control.PollForDescriptors(correlationID, archive.SessionID, subscriptionCount); err != nil {
+	var descriptors []*codecs.RecordingSubscriptionDescriptor
+	if _, err := archive.Control.PollForSubscriptionDescriptors(correlationID, subscriptionCount, archive.Control.AppendRecordingSubscriptionDescriptorConsumer(&descriptors)); err != nil {
 		return nil, err
 	}
 
-	// If there's a ControlResponse let's see what transpired
-	response := archive.Control.Results.ControlResponse
-	if response != nil {
-		switch response.Code {
-		case codecs.ControlResponseCode.ERROR:
-			return nil, fmt.Errorf("response for correlationID %d (relevantId %d) failed %s", response.CorrelationId, response.RelevantId, response.ErrorMessage)
-
-		case codecs.ControlResponseCode.SUBSCRIPTION_UNKNOWN:
-			return archive.Control.Results.RecordingSubscriptionDescriptors, nil
-		}
-	}
-
 	// Otherwise we can return our results
-	return archive.Control.Results.RecordingSubscriptionDescriptors, nil
-
+	return descriptors, nil
 }
 
 // DetachSegments from the beginning of a recording up to the
