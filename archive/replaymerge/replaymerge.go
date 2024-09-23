@@ -20,6 +20,7 @@ import (
 	"github.com/lirm/aeron-go/aeron"
 	"github.com/lirm/aeron-go/aeron/logbuffer/term"
 	"github.com/lirm/aeron-go/archive"
+	"github.com/lirm/aeron-go/archive/codecs"
 )
 
 const LiveAddMaxWindow = int32(32 * 1024 * 1024)
@@ -481,20 +482,20 @@ func (rm *ReplayMerge) checkProgress(nowMs int64) error {
 // Returns whether this succeeded, and what the error is.
 func (rm *ReplayMerge) pollForResponse() (bool, error) {
 	correlationId := rm.activeCorrelationId
-	poller := rm.archive.Control
+	poller := rm.archive.Control.ControlResponsePoller()
 
-	if poller.Poll() > 0 && poller.Results.IsPollComplete {
-		if poller.Results.ControlResponse.ControlSessionId == rm.archive.SessionID {
-			if poller.Results.ErrorResponse != nil {
-				err := fmt.Errorf(
-					"archive response for correlationId=%d, error=%s",
-					correlationId,
-					poller.Results.ErrorResponse,
+	if poller.Poll() > 0 && poller.IsPollComplete {
+		if poller.ControlSessionId == rm.archive.SessionID {
+			if poller.Code == codecs.ControlResponseCode.ERROR {
+				err := archive.NewArchiveError(
+					poller.CorrelationId,
+					int(poller.RelevantId),
+					fmt.Sprintf("archive response for correlationId=%d, error=%s", correlationId, poller.ErrorMessage),
 				)
 				return false, err
 			}
 		}
-		return poller.Results.CorrelationId == correlationId, nil
+		return poller.CorrelationId == correlationId, nil
 	}
 	// TODO: (false, nil) is what was here before, but I suspect that (true, nil) is more accurate?
 	// Check this when revamping archive code.
@@ -502,6 +503,6 @@ func (rm *ReplayMerge) pollForResponse() (bool, error) {
 }
 
 func (rm *ReplayMerge) polledRelevantId() int64 {
-	poller := rm.archive.Control
-	return poller.Results.ControlResponse.RelevantId
+	poller := rm.archive.Control.ControlResponsePoller()
+	return poller.RelevantId
 }
