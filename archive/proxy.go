@@ -88,6 +88,20 @@ func (proxy *Proxy) CloseSessionRequest() error {
 	return nil
 }
 
+func (proxy *Proxy) CloseSession(controlSessionId int64) error {
+	// Create a packet and send it
+	bytes, err := codecs.CloseSessionRequestPacket(proxy.marshaller, proxy.archive.Options.RangeChecking, controlSessionId)
+	if err != nil {
+		return err
+	}
+
+	if ret := proxy.Offer(atomic.MakeBuffer(bytes, len(bytes)), 0, int32(len(bytes)), nil); ret < 0 {
+		return fmt.Errorf("Offer failed: %d", ret)
+	}
+
+	return nil
+}
+
 // StartRecordingRequest packet and offer
 // Uses the more recent protocol addition StartdRecordingRequest2 which added autoStop
 func (proxy *Proxy) StartRecordingRequest(correlationID int64, stream int32, isLocal bool, autoStop bool, channel string) error {
@@ -540,6 +554,19 @@ func (proxy *Proxy) ChallengeResponse(correlationID int64, encodedCredentials []
 func (proxy *Proxy) KeepAliveRequest(correlationID int64) error {
 	// Create a packet and send it
 	bytes, err := codecs.KeepAliveRequestPacket(proxy.marshaller, proxy.archive.Options.RangeChecking, proxy.archive.SessionID, correlationID)
+	if err != nil {
+		return err
+	}
+
+	if ret := proxy.Offer(atomic.MakeBuffer(bytes, len(bytes)), 0, int32(len(bytes)), nil); ret < 0 {
+		return fmt.Errorf("Offer failed: %d", ret)
+	}
+
+	return nil
+}
+
+func (proxy *Proxy) KeepAlive(controlSessionId, correlationId int64) error {
+	bytes, err := codecs.KeepAliveRequestPacket(proxy.marshaller, proxy.archive.Options.RangeChecking, controlSessionId, correlationId)
 	if err != nil {
 		return err
 	}
