@@ -41,11 +41,20 @@ type ArchiveContext struct {
 	AeronCtx       *aeron.Context
 }
 
-func NewArchiveContext(options *Options, aeronCtx *aeron.Context) (*ArchiveContext, error) {
-	// Connect the underlying aeron
-	aeron, err := aeron.Connect(aeronCtx)
-	if err != nil {
-		return nil, err
+func NewArchiveContext(options *Options, aeronCtx *aeron.Context, existingAeronClient *aeron.Aeron) (*ArchiveContext, error) {
+	var err error
+	aeronClient := existingAeronClient
+	if aeronClient == nil {
+		// Connect the underlying aeron
+		aeronClient, err = aeron.Connect(aeronCtx)
+		if err != nil {
+			return nil, err
+		}
+	}
+
+	// Use the provided options or use our defaults
+	if options == nil {
+		options = DefaultOptions()
 	}
 
 	ctx := &ArchiveContext{
@@ -57,7 +66,7 @@ func NewArchiveContext(options *Options, aeronCtx *aeron.Context) (*ArchiveConte
 		ControlResponseChannel:  options.ResponseChannel,
 		ControlResponseStreamId: options.ResponseStream,
 		IdleStrategy:            options.IdleStrategy,
-		Aeron:                   aeron,
+		Aeron:                   aeronClient,
 		ErrorHandler:            LoggingErrorListener,
 		recordingSignalConsumer: LoggingRecordingSignalListener,
 		// ControlTermBufferSparse: true,

@@ -2,6 +2,7 @@ package archive
 
 import (
 	"fmt"
+	"strconv"
 	"time"
 
 	"github.com/lirm/aeron-go/aeron"
@@ -77,7 +78,7 @@ func (ac *AsyncConnect) checkAndSetupResponseChannel(subscription *aeron.Subscri
 		if err != nil {
 			return err
 		}
-		requestChannelURI.Set(aeron.ResponseCorrelationIdParamName, string(subscription.RegistrationID()))
+		requestChannelURI.Set(aeron.ResponseCorrelationIdParamName, strconv.FormatInt(subscription.RegistrationID(), 10))
 		ac.Ctx.ControlRequestChannel = requestChannelURI.String()
 		// ac.Ctx.ArchiveOptions.RequestChannel = requestChannelURI.String()
 		logger.Debugf("new requestChannel uri: %s", requestChannelURI.String())

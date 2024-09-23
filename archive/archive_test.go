@@ -106,7 +106,7 @@ func TestMain(m *testing.M) {
 		DEBUG = true
 	}
 
-	archiveCtx, err := NewArchiveContext(options, context)
+	archiveCtx, err := NewArchiveContext(options, context, nil)
 	archive, err = Connect(archiveCtx)
 	if err != nil || archive == nil {
 		log.Printf("archive-media-driver connection failed, skipping all archive_tests:%s", err.Error())
@@ -136,7 +136,7 @@ func TestMain(m *testing.M) {
 		testCases[0].replayStream++
 	}
 
-	archiveCtx, err = NewArchiveContext(options, context)
+	archiveCtx, err = NewArchiveContext(options, context, nil)
 	archive, err = Connect(archiveCtx)
 	if err != nil || archive == nil {
 		log.Printf("secure-archive-media-driver connection failed, skipping allsecure  archive_tests:%s", err.Error())
@@ -690,7 +690,7 @@ func ConcurrentSimple(wg *sync.WaitGroup, n int, t *testing.T) {
 	r := rand.New(rand.NewSource(time.Now().UnixNano()))
 	testCases[0].sampleStream += int32(r.Intn(10000))
 
-	archiveCtx, err := NewArchiveContext(options, context)
+	archiveCtx, err := NewArchiveContext(options, context, nil)
 	archive, err = Connect(archiveCtx)
 	if err != nil || archive == nil {
 		t.Logf("archive-media-driver connection failed, skipping all archive_tests:%s", err.Error())
