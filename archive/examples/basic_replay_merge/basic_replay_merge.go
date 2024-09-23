@@ -72,7 +72,7 @@ func main() {
 		logging.SetLevel(logging.NOTICE, logID)
 	}
 
-	archiveCtx, err := archive.NewArchiveContext(options, context, nil)
+	archiveCtx, err := archive.NewArchiveContext(options, context)
 	if err != nil {
 		logger.Fatalf(err.Error())
 	}

@@ -34,6 +34,16 @@ type Proxy struct {
 	rangeChecking     bool
 }
 
+func NewProxy(publication *aeron.Publication, retryIdleStrategy idlestrategy.Idler, timeout time.Duration, rangeChecking bool) *Proxy {
+	return &Proxy{
+		Publication:       publication,
+		marshaller:        codecs.NewSbeGoMarshaller(),
+		timeout:           timeout,
+		retryIdleStrategy: retryIdleStrategy,
+		rangeChecking:     rangeChecking,
+	}
+}
+
 // Offer to our request publication with a retry to allow time for the image establishment, some back pressure etc
 func (proxy *Proxy) Offer(buffer *atomic.Buffer, offset int32, length int32, reservedValueSupplier term.ReservedValueSupplier) int64 {
 	start := time.Now()
@@ -55,6 +65,11 @@ func (proxy *Proxy) Offer(buffer *atomic.Buffer, offset int32, length int32, res
 	logger.Debugf("Proxy.Offer timing out [%d]", ret)
 	return ret
 
+}
+
+// OfferOnce is the real Java Offer
+func (proxy *Proxy) OfferOnce(buffer *atomic.Buffer, offset int32, length int32, reservedValueSupplier term.ReservedValueSupplier) int64 {
+	return proxy.Publication.Offer(buffer, offset, length, reservedValueSupplier)
 }
 
 // From here we have all the functions that create a data packet and send it on the
@@ -568,17 +583,18 @@ func (proxy *Proxy) KeepAliveRequest(correlationID int64, controlSessionId int64
 	return nil
 }
 
-func (proxy *Proxy) KeepAlive(controlSessionId, correlationId int64) error {
+func (proxy *Proxy) KeepAlive(controlSessionId, correlationId int64) (bool, error) {
 	bytes, err := codecs.KeepAliveRequestPacket(proxy.marshaller, proxy.rangeChecking, controlSessionId, correlationId)
 	if err != nil {
-		return err
+		return false, err
 	}
 
-	if ret := proxy.Offer(atomic.MakeBuffer(bytes, len(bytes)), 0, int32(len(bytes)), nil); ret < 0 {
-		return fmt.Errorf("Offer failed: %d", ret)
+	ret := proxy.Offer(atomic.MakeBuffer(bytes, len(bytes)), 0, int32(len(bytes)), nil)
+	if ret < 0 {
+		return false, fmt.Errorf("Offer failed: %d", ret)
 	}
 
-	return nil
+	return ret > 0, nil
 }
 
 // TaggedReplicateRequest packet and offer

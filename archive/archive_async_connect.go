@@ -6,10 +6,11 @@ import (
 	"time"
 
 	"github.com/lirm/aeron-go/aeron"
+	"github.com/lirm/aeron-go/aeron/util"
 	"github.com/lirm/aeron-go/archive/codecs"
 )
 
-var PROTOCOL_VERSION_WITH_ARCHIVE_ID = codecs.SemanticVersion()
+var PROTOCOL_VERSION_WITH_ARCHIVE_ID = int32(util.SemanticVersionCompose(1, 11, 0))
 
 type AsyncConnect struct {
 	Ctx              *ArchiveContext
@@ -42,6 +43,8 @@ type AsyncConnectStateValues struct {
 
 var State = AsyncConnectStateValues{0, 1, 2, 3, 4, 5, 6, 7, 8, 9}
 
+// NewAsyncConnect ...
+// Java - https://github.com/real-logic/aeron/blob/1.46.2/aeron-archive/src/main/java/io/aeron/archive/client/AeronArchive.java#L3550
 func NewAsyncConnect(ctx *ArchiveContext) (*AsyncConnect, error) {
 	ac := &AsyncConnect{
 		Ctx:   ctx,
@@ -69,7 +72,6 @@ func NewAsyncConnect(ctx *ArchiveContext) (*AsyncConnect, error) {
 
 func (ac *AsyncConnect) checkAndSetupResponseChannel(subscription *aeron.Subscription) error {
 	uri, err := aeron.ParseChannelUri(ac.Ctx.ControlResponseChannel)
-	logger.Debugf("parsed responseChannel uri: %s", uri.String())
 	if err != nil {
 		return err
 	}
@@ -81,83 +83,103 @@ func (ac *AsyncConnect) checkAndSetupResponseChannel(subscription *aeron.Subscri
 		requestChannelURI.Set(aeron.ResponseCorrelationIdParamName, strconv.FormatInt(subscription.RegistrationID(), 10))
 		ac.Ctx.ControlRequestChannel = requestChannelURI.String()
 		// ac.Ctx.ArchiveOptions.RequestChannel = requestChannelURI.String()
-		logger.Debugf("new requestChannel uri: %s", requestChannelURI.String())
 	}
 	return err
 }
 
+// Poll for a complete connection
 func (ac *AsyncConnect) Poll() (aeronArchive *Archive, err error) {
 	if err := ac.checkDeadline(); err != nil {
 		return nil, err
 	}
 
-	currState := ac.State
-
-	if State.ADD_PUBLICATION == currState {
-		// Create the publication half for the proxy that looks after sending requests on that
+	if State.ADD_PUBLICATION == ac.State {
 		publication, err := ac.Ctx.Aeron.GetExclusivePublication(ac.publicationRegistrationId)
 		if err != nil {
 			return nil, err
 		}
 		if publication != nil {
 			ac.publicationRegistrationId = aeron.NullValue
-			ac.archiveProxy = &Proxy{
-				Publication: publication,
-				marshaller:  codecs.NewSbeGoMarshaller(),
-			}
+			ac.archiveProxy = NewProxy(
+				publication,
+				ac.Ctx.IdleStrategy,
+				ac.Ctx.MessageTimeout,
+				ac.Ctx.ArchiveOptions.RangeChecking)
 			ac.State = State.AWAIT_PUBLICATION_CONNECTED
+			logger.Debugf("Archive Connection State transition to: AWAIT_PUBLICATION_CONNECTED")
 		}
 	}
 
-	if State.AWAIT_PUBLICATION_CONNECTED == currState {
+	if State.AWAIT_PUBLICATION_CONNECTED == ac.State {
 		if !ac.archiveProxy.Publication.IsConnected() {
 			return nil, nil
 		}
+		logger.Debugf("Archive Connection State transition to: SEND_CONNECT_REQUEST")
 		ac.State = State.SEND_CONNECT_REQUEST
 	}
 
-	if State.SEND_CONNECT_REQUEST == currState {
+	if State.SEND_CONNECT_REQUEST == ac.State {
 		responseChannel := ac.controlResponsePoller.Subscription.TryResolveChannelEndpointPort()
 		if responseChannel == "" {
 			return nil, nil
 		}
 
 		ac.CorrelationId = ac.Ctx.Aeron.NextCorrelationID()
-		if err = ac.archiveProxy.TryConnect(responseChannel, ac.Ctx.ControlResponseStreamId, ac.CorrelationId); err != nil {
+		connected, err := ac.archiveProxy.TryConnect(responseChannel, ac.Ctx.ControlResponseStreamId, ac.CorrelationId)
+		if err != nil {
 			return nil, err
+		}
+		if !connected {
+			return nil, nil
 		}
 
 		ac.State = State.AWAIT_SUBSCRIPTION_CONNECTED
+		logger.Debugf("Archive Connection State transition to: AWAIT_SUBSCRIPTION_CONNECTED")
 	}
 
-	if State.AWAIT_SUBSCRIPTION_CONNECTED == currState {
+	if State.AWAIT_SUBSCRIPTION_CONNECTED == ac.State {
 		if !ac.controlResponsePoller.Subscription.IsConnected() {
 			return nil, nil
 		}
 
 		ac.State = State.AWAIT_CONNECT_RESPONSE
+		logger.Debugf("Archive Connection State transition to: AWAIT_CONNECT_RESPONSE")
 	}
 
-	if State.SEND_ARCHIVE_ID_REQUEST == currState {
-		if err = ac.archiveProxy.ArchiveId(ac.CorrelationId, ac.ControlSessionId); err != nil {
+	if State.SEND_ARCHIVE_ID_REQUEST == ac.State {
+		offered, err := ac.archiveProxy.ArchiveId(ac.CorrelationId, ac.ControlSessionId)
+		if err != nil {
 			return nil, err
+		}
+		if !offered {
+			return nil, nil
 		}
 
 		ac.State = State.AWAIT_ARCHIVE_ID_RESPONSE
+		logger.Debugf("Archive Connection State transition to: AWAIT_ARCHIVE_ID_RESPONSE")
 	}
 
-	if State.SEND_CHALLENGE_RESPONSE == currState {
-		if err = ac.archiveProxy.TryChallengeResponse(ac.encodedCredentialsFromChallenge, ac.CorrelationId, ac.ControlSessionId); err != nil {
+	if State.SEND_CHALLENGE_RESPONSE == ac.State {
+		challenged, err := ac.archiveProxy.TryChallengeResponse(ac.encodedCredentialsFromChallenge, ac.CorrelationId, ac.ControlSessionId)
+		if err != nil {
 			return nil, err
+		}
+		if !challenged {
+			return nil, nil
 		}
 
 		ac.State = State.AWAIT_CHALLENGE_RESPONSE
+		logger.Debugf("Archive Connection State transition to: AWAIT_CHALLENGE_RESPONSE")
 	}
 
 	ac.controlResponsePoller.Poll()
+	if ac.controlResponsePoller.ArchiveError != nil {
+		return nil, err
+	}
 
 	if ac.controlResponsePoller.IsPollComplete &&
 		ac.controlResponsePoller.CorrelationId == ac.CorrelationId {
+
 		ac.ControlSessionId = ac.controlResponsePoller.ControlSessionId
 		if ac.controlResponsePoller.WasChallenged() {
 			// TODO: real security credentials supplier is not part of this for now
@@ -179,28 +201,37 @@ func (ac *AsyncConnect) Poll() (aeronArchive *Archive, err error) {
 			ac.encodedCredentialsFromChallenge = ac.controlResponsePoller.EncodedChallenge
 
 			ac.CorrelationId = ac.Ctx.Aeron.NextCorrelationID()
-
 			ac.State = State.SEND_CHALLENGE_RESPONSE
+			logger.Debugf("Archive Connection State transition to: SEND_CHALLENGE_RESPONSE")
 		} else {
 			code := ac.controlResponsePoller.Code
-			if codecs.ControlResponseCode.ERROR == code {
-				errorMessage := ac.controlResponsePoller.ErrorMessage
-				errorCode := ac.controlResponsePoller.RelevantId
-				return nil, NewArchiveError(ac.CorrelationId, int(errorCode), errorMessage)
+			if codecs.ControlResponseCode.OK != code {
+				if err := ac.archiveProxy.CloseSession(ac.ControlSessionId); err != nil {
+					return nil, err
+				}
+				if codecs.ControlResponseCode.ERROR == code {
+					errorMessage := ac.controlResponsePoller.ErrorMessage
+					errorCode := ac.controlResponsePoller.RelevantId
+					return nil, NewArchiveError(ac.CorrelationId, int(errorCode), errorMessage)
+				}
+				return nil, NewArchiveError(ac.CorrelationId, aeron.NullValue, fmt.Sprintf("unexpected response: code=%d", code))
 			}
-			return nil, NewArchiveError(ac.CorrelationId, aeron.NullValue, fmt.Sprintf("unexpected response: code=%d", code))
 		}
 
-		if State.AWAIT_ARCHIVE_ID_RESPONSE == currState {
+		if State.AWAIT_ARCHIVE_ID_RESPONSE == ac.State {
 			archiveId := ac.controlResponsePoller.RelevantId
 			aeronArchive, err = ac.transitionToDone(archiveId)
 		} else {
 			archiveProtocolVersion := ac.controlResponsePoller.Version
 			if archiveProtocolVersion < PROTOCOL_VERSION_WITH_ARCHIVE_ID {
 				aeronArchive, err = ac.transitionToDone(aeron.NullValue)
+				if err != nil {
+					return nil, err
+				}
 			} else {
 				ac.CorrelationId = ac.Ctx.Aeron.NextCorrelationID()
 				ac.State = State.SEND_ARCHIVE_ID_REQUEST
+				logger.Debugf("Archive Connection State transition to: SEND_ARCHIVE_ID_REQUEST")
 			}
 		}
 	}
@@ -209,14 +240,22 @@ func (ac *AsyncConnect) Poll() (aeronArchive *Archive, err error) {
 }
 
 func (ac *AsyncConnect) transitionToDone(archiveId int64) (aeronArchive *Archive, err error) {
-	if err = ac.archiveProxy.KeepAlive(ac.ControlSessionId, aeron.NullValue); err != nil {
-		ac.archiveProxy.CloseSession(ac.ControlSessionId)
+	logger.Debugf("transitionToDone: archiveId=%d ControlSessionId=%d", archiveId, ac.ControlSessionId)
+	alived, err := ac.archiveProxy.KeepAlive(ac.ControlSessionId, aeron.NullValue)
+	if err != nil {
+		return nil, err
+	}
+	if !alived {
+		if err = ac.archiveProxy.CloseSession(ac.ControlSessionId); err != nil {
+			logger.Debugf("failed to CloseSession ControlSessionId=%d", ac.ControlSessionId)
+		}
 		return nil, NewArchiveError(-1, -1, "failed to send keep alive after archive connect")
 	}
 
-	aeronArchive = NewArchiveV2(ac.Ctx, ac.controlResponsePoller, ac.archiveProxy, ac.ControlSessionId, archiveId)
+	aeronArchive = NewArchive(ac.Ctx, ac.controlResponsePoller, ac.archiveProxy, ac.ControlSessionId, archiveId)
 
 	ac.State = State.DONE
+	logger.Debugf("Archive Connection State transition to: DONE")
 	return
 }
 

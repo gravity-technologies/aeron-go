@@ -33,32 +33,7 @@ type Control struct {
 	recordingSubscriptionDescriptorPoller *RecordingSubscriptionDescriptorPoller
 }
 
-// PollContext contains the information we'll need in the image Poll()
-// callback to match against our request or for async events to invoke
-// the appropriate listener
-type PollContext struct {
-	control       *Control
-	correlationID int64
-}
-
-// Archive Connection State used internally for connection establishment
-const (
-	ControlStateError              = -1
-	ControlStateNew                = iota
-	ControlStateConnectRequestSent = iota
-	ControlStateChallenged         = iota
-	ControlStateConnectRequestOk   = iota
-	ControlStateConnected          = iota
-	ControlStateTimedOut           = iota
-)
-
 var ErrNotConnected = fmt.Errorf("not connected")
-
-// Used internally to handle connection state
-type controlState struct {
-	state int
-	err   error
-}
 
 // CodecIds stops us allocating every object when we need only one
 // Arguably SBE should give us a static value

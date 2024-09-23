@@ -115,7 +115,6 @@ func (poller *ControlResponsePoller) OnFragment(
 	switch uint16(poller.TemplateId) {
 	case codecIds.controlResponse:
 		var controlResponse = new(codecs.ControlResponse)
-		logger.Debugf("Received pollerResponse: length %d", buf.Len())
 		if err := controlResponse.Decode(marshaller, buf, hdr.Version, hdr.BlockLength, rangeChecking); err != nil {
 			// Not much to be done here as we can't correlate
 			err = fmt.Errorf("failed to decode poller response: %w", err)
@@ -167,7 +166,7 @@ func (poller *ControlResponsePoller) OnFragment(
 		return term.ControlledPollActionBreak
 
 	default:
-		logger.Debug("ControlResponsePoller: Insert decoder for type: %d", hdr.TemplateId)
+		logger.Debugf("ControlResponsePoller: Insert decoder for type: %d", hdr.TemplateId)
 	}
 	return term.ControlledPollActionContinue
 }

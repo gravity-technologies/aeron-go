@@ -5,6 +5,7 @@ import (
 
 	"github.com/lirm/aeron-go/aeron"
 	"github.com/lirm/aeron-go/aeron/idlestrategy"
+	"github.com/lirm/aeron-go/aeron/logging"
 	"github.com/lirm/aeron-go/archive/codecs"
 )
 
@@ -41,20 +42,35 @@ type ArchiveContext struct {
 	AeronCtx       *aeron.Context
 }
 
-func NewArchiveContext(options *Options, aeronCtx *aeron.Context, existingAeronClient *aeron.Aeron) (*ArchiveContext, error) {
-	var err error
-	aeronClient := existingAeronClient
-	if aeronClient == nil {
-		// Connect the underlying aeron
-		aeronClient, err = aeron.Connect(aeronCtx)
-		if err != nil {
-			return nil, err
-		}
-	}
-
+// NewArchiveContext bridges the gap from aeron-go archive init to Java
+func NewArchiveContext(options *Options, aeronCtx *aeron.Context) (*ArchiveContext, error) {
 	// Use the provided options or use our defaults
 	if options == nil {
 		options = DefaultOptions()
+	}
+
+	// Set the logging levels
+	logging.SetLevel(options.ArchiveLoglevel, "archive")
+	logging.SetLevel(options.AeronLoglevel, "aeron")
+	logging.SetLevel(options.AeronLoglevel, "memmap")
+	logging.SetLevel(options.AeronLoglevel, "driver")
+	logging.SetLevel(options.AeronLoglevel, "counters")
+	logging.SetLevel(options.AeronLoglevel, "logbuffers")
+	logging.SetLevel(options.AeronLoglevel, "buffer")
+	logging.SetLevel(options.AeronLoglevel, "rb")
+
+	// In Debug mode initialize our listeners with simple loggers
+	// Note that these actually log at INFO so you can do this manually for INFO if you like
+	if logging.GetLevel("archive") >= logging.DEBUG {
+		logger.Debugf("Setting logging listeners")
+
+		aeronCtx.NewSubscriptionHandler(LoggingNewSubscriptionListener)
+		aeronCtx.NewPublicationHandler(LoggingNewPublicationListener)
+	}
+
+	aeronClient, err := aeron.Connect(aeronCtx)
+	if err != nil {
+		return nil, err
 	}
 
 	ctx := &ArchiveContext{

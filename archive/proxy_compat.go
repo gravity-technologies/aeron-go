@@ -8,47 +8,49 @@ import (
 )
 
 // ArchiveId Get the id of the archive
-func (proxy *Proxy) ArchiveId(correlationId, controlSessionId int64) error {
+func (proxy *Proxy) ArchiveId(correlationId, controlSessionId int64) (bool, error) {
 	bytes, err := codecs.ArchiveIdPacket(proxy.marshaller, proxy.rangeChecking, controlSessionId, correlationId)
 	if err != nil {
-		return err
+		return false, err
 	}
 
-	if ret := proxy.Offer(atomic.MakeBuffer(bytes, len(bytes)), 0, int32(len(bytes)), nil); ret < 0 {
-		return fmt.Errorf("Offer failed: %d", ret)
+	ret := proxy.Offer(atomic.MakeBuffer(bytes, len(bytes)), 0, int32(len(bytes)), nil)
+	if ret < 0 {
+		return false, fmt.Errorf("Offer failed: %d", ret)
 	}
 
-	return nil
-
+	return ret > 0, nil
 }
 
 // TryChallengeResponse ...
-func (proxy *Proxy) TryChallengeResponse(encodedCredentials []uint8, correlationId, controlSessionId int64) error {
+func (proxy *Proxy) TryChallengeResponse(encodedCredentials []uint8, correlationId, controlSessionId int64) (bool, error) {
 	// Create a packet and send it
 	bytes, err := codecs.ChallengeResponsePacket(proxy.marshaller, proxy.rangeChecking, controlSessionId, correlationId, encodedCredentials)
 	if err != nil {
-		return err
+		return false, err
 	}
 
-	if ret := proxy.Offer(atomic.MakeBuffer(bytes, len(bytes)), 0, int32(len(bytes)), nil); ret < 0 {
-		return fmt.Errorf("Offer failed: %d", ret)
+	ret := proxy.Offer(atomic.MakeBuffer(bytes, len(bytes)), 0, int32(len(bytes)), nil)
+	if ret < 0 {
+		return false, fmt.Errorf("Offer failed: %d", ret)
 	}
 
-	return nil
+	return ret > 0, nil
 }
 
 // TryConnect ...
-func (proxy *Proxy) TryConnect(responseChannel string, responseStreamId int32, correlationID int64) error {
+func (proxy *Proxy) TryConnect(responseChannel string, responseStreamId int32, correlationID int64) (bool, error) {
 
 	// Create a packet and send it
 	bytes, err := codecs.ConnectRequestPacket(proxy.marshaller, proxy.rangeChecking, correlationID, responseStreamId, responseChannel)
 	if err != nil {
-		return err
+		return false, err
 	}
 
-	if ret := proxy.Offer(atomic.MakeBuffer(bytes, len(bytes)), 0, int32(len(bytes)), nil); ret < 0 {
-		return fmt.Errorf("Offer failed: %d", ret)
+	ret := proxy.OfferOnce(atomic.MakeBuffer(bytes, len(bytes)), 0, int32(len(bytes)), nil)
+	if ret < 0 {
+		return false, fmt.Errorf("Offer failed: %d", ret)
 	}
 
-	return nil
+	return ret > 0, nil
 }
