@@ -47,11 +47,14 @@ func NewAsyncConnect(ctx *ArchiveContext) (*AsyncConnect, error) {
 		State: State.ADD_PUBLICATION,
 	}
 
-	subscription, err := ac.Ctx.Aeron.AddSubscription(ac.Ctx.ControlRequestChannel, ac.Ctx.ControlResponseStreamId)
+	subscription, err := ac.Ctx.Aeron.AddSubscription(ac.Ctx.ControlResponseChannel, ac.Ctx.ControlResponseStreamId)
 	if err != nil {
 		return nil, err
 	}
 	ac.controlResponsePoller = NewControlResponsePoller(subscription, ControlFragmentLimit)
+
+	checkAndSetupResponseChannel(ac.controlResponsePoller.Subscription)
+
 	publicationRegistrationId, err := ac.Ctx.Aeron.AsyncAddExclusivePublication(ac.Ctx.ControlRequestChannel, ac.Ctx.ControlRequestStreamId)
 	if err != nil {
 		return nil, err
