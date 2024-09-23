@@ -9,7 +9,7 @@ import (
 
 // ArchiveId Get the id of the archive
 func (proxy *Proxy) ArchiveId(correlationId, controlSessionId int64) error {
-	bytes, err := codecs.ArchiveIdPacket(proxy.marshaller, proxy.archive.Options.RangeChecking, controlSessionId, correlationId)
+	bytes, err := codecs.ArchiveIdPacket(proxy.marshaller, proxy.rangeChecking, controlSessionId, correlationId)
 	if err != nil {
 		return err
 	}
@@ -25,7 +25,7 @@ func (proxy *Proxy) ArchiveId(correlationId, controlSessionId int64) error {
 // TryChallengeResponse ...
 func (proxy *Proxy) TryChallengeResponse(encodedCredentials []uint8, correlationId, controlSessionId int64) error {
 	// Create a packet and send it
-	bytes, err := codecs.ChallengeResponsePacket(proxy.marshaller, proxy.archive.Options.RangeChecking, controlSessionId, correlationId, encodedCredentials)
+	bytes, err := codecs.ChallengeResponsePacket(proxy.marshaller, proxy.rangeChecking, controlSessionId, correlationId, encodedCredentials)
 	if err != nil {
 		return err
 	}
@@ -41,7 +41,7 @@ func (proxy *Proxy) TryChallengeResponse(encodedCredentials []uint8, correlation
 func (proxy *Proxy) TryConnect(responseChannel string, responseStreamId int32, correlationID int64) error {
 
 	// Create a packet and send it
-	bytes, err := codecs.ConnectRequestPacket(proxy.marshaller, proxy.archive.Options.RangeChecking, correlationID, responseStreamId, responseChannel)
+	bytes, err := codecs.ConnectRequestPacket(proxy.marshaller, proxy.rangeChecking, correlationID, responseStreamId, responseChannel)
 	if err != nil {
 		return err
 	}

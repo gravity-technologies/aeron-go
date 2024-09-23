@@ -350,7 +350,7 @@ func TestPollForErrorEvents(t *testing.T) {
 	// Now we'll reach inside the archive a little to leave an outstanding request in the queue
 	// We know a StopRecording of a non-existent recording should fail but this call will succeed
 	// as it's only the request half
-	err = archive.Proxy.StopRecordingSubscriptionRequest(12345, 54321)
+	err = archive.Proxy.StopRecordingSubscriptionRequest(12345, 54321, archive.SessionID)
 	if err != nil {
 		t.Log(err)
 		t.FailNow()

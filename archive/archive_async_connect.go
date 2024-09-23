@@ -212,9 +212,9 @@ func (ac *AsyncConnect) transitionToDone(archiveId int64) (aeronArchive *Archive
 
 func (ac *AsyncConnect) checkDeadline() error {
 	if time.Now().After(ac.deadline) {
-		uriInfo := " subscription.uri=" + ac.archiveProxy.archive.Options.ResponseChannel
+		uriInfo := " subscription.uri=" + ac.Ctx.ArchiveOptions.ResponseChannel
 		if ac.State < 3 {
-			uriInfo = " publication.uri=" + ac.archiveProxy.archive.Options.RequestChannel
+			uriInfo = " publication.uri=" + ac.Ctx.ArchiveOptions.RequestChannel
 		}
 		return fmt.Errorf("Archive connect timeout: step=%d %s", ac.State, uriInfo)
 	}

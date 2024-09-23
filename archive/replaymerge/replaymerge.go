@@ -294,7 +294,7 @@ func (rm *ReplayMerge) getRecordingPosition(nowMs int64) (workCount int, err err
 	if aeron.NullValue == rm.activeCorrelationId {
 		correlationId := rm.archive.Aeron().NextCorrelationID()
 
-		if rm.archive.Proxy.RecordingPositionRequest(correlationId, rm.recordingId) == nil {
+		if rm.archive.Proxy.RecordingPositionRequest(correlationId, rm.recordingId, rm.archive.SessionID) == nil {
 			rm.activeCorrelationId = correlationId
 			rm.timeOfLastProgressMs = nowMs
 			workCount += 1
@@ -314,7 +314,7 @@ func (rm *ReplayMerge) getRecordingPosition(nowMs int64) (workCount int, err err
 		if archive.RecordingPositionNull == rm.nextTargetPosition {
 			correlationId := rm.archive.Aeron().NextCorrelationID()
 
-			if rm.archive.Proxy.StopPositionRequest(correlationId, rm.recordingId) == nil {
+			if rm.archive.Proxy.StopPositionRequest(correlationId, rm.recordingId, rm.archive.SessionID) == nil {
 				rm.activeCorrelationId = correlationId
 				rm.timeOfLastProgressMs = nowMs
 				workCount += 1
@@ -339,7 +339,8 @@ func (rm *ReplayMerge) replay(nowMs int64) (workCount int, err error) {
 			rm.startPosition,
 			archive.RecordingLengthMax,
 			rm.replayChannelUri.String(),
-			rm.subscription.StreamID()) == nil {
+			rm.subscription.StreamID(),
+			rm.archive.SessionID) == nil {
 			rm.activeCorrelationId = correlationId
 			rm.timeOfLastProgressMs = nowMs
 			workCount += 1
@@ -395,7 +396,7 @@ func (rm *ReplayMerge) attemptLiveJoin(nowMs int64) (workCount int, err error) {
 
 	if aeron.NullValue == rm.activeCorrelationId {
 		correlationId := rm.archive.Aeron().NextCorrelationID()
-		if rm.archive.Proxy.RecordingPositionRequest(correlationId, rm.recordingId) == nil {
+		if rm.archive.Proxy.RecordingPositionRequest(correlationId, rm.recordingId, rm.archive.SessionID) == nil {
 			rm.activeCorrelationId = correlationId
 			workCount += 1
 		}
@@ -413,7 +414,7 @@ func (rm *ReplayMerge) attemptLiveJoin(nowMs int64) (workCount int, err error) {
 
 		if archive.RecordingPositionNull == rm.nextTargetPosition {
 			correlationId := rm.archive.Aeron().NextCorrelationID()
-			if rm.archive.Proxy.RecordingPositionRequest(correlationId, rm.recordingId) == nil {
+			if rm.archive.Proxy.RecordingPositionRequest(correlationId, rm.recordingId, rm.archive.SessionID) == nil {
 				rm.activeCorrelationId = correlationId
 			}
 		} else {
@@ -447,7 +448,7 @@ func (rm *ReplayMerge) attemptLiveJoin(nowMs int64) (workCount int, err error) {
 
 func (rm *ReplayMerge) stopReplay() {
 	correlationId := rm.archive.Aeron().NextCorrelationID()
-	if rm.archive.Proxy.StopReplayRequest(correlationId, rm.replaySessionId) == nil {
+	if rm.archive.Proxy.StopReplayRequest(correlationId, rm.replaySessionId, rm.archive.SessionID) == nil {
 		rm.isReplayActive = false
 	}
 }
