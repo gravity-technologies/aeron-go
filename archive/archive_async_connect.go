@@ -95,8 +95,8 @@ func (ac *AsyncConnect) Poll() (aeronArchive *Archive, err error) {
 				Publication: publication,
 				marshaller:  codecs.NewSbeGoMarshaller(),
 			}
+			ac.State = State.AWAIT_PUBLICATION_CONNECTED
 		}
-		ac.State = State.AWAIT_PUBLICATION_CONNECTED
 	}
 
 	if State.AWAIT_PUBLICATION_CONNECTED == currState {
