@@ -24,8 +24,6 @@ import (
 
 	"github.com/lirm/aeron-go/aeron"
 	"github.com/lirm/aeron-go/aeron/atomic"
-	"github.com/lirm/aeron-go/aeron/logbuffer"
-	"github.com/lirm/aeron-go/aeron/logbuffer/term"
 	"github.com/lirm/aeron-go/aeron/logging"
 	"github.com/lirm/aeron-go/archive/codecs"
 )
@@ -41,6 +39,12 @@ type Archive struct {
 	Events       *RecordingEventsAdapter // For async recording events (must be enabled)
 	Listeners    *ArchiveListeners       // Per client event listeners for async callbacks
 	mtx          sync.Mutex              // To ensure no overlapped I/O on archive RPC calls
+
+	ArchiveContext ArchiveContext
+	ArchiveId      int64
+	// ControlSessionId == SessionID
+	// ArchiveProxy == Proxy
+
 }
 
 // Constant values used to control behaviour of StartReplay
@@ -187,7 +191,7 @@ func AddSessionIdToChannel(channel string, sessionID int32) (string, error) {
 // NewArchive factory method to create an Archive instance
 // You may provide your own archive Options or otherwise one will be created from defaults
 // You may provide your own aeron Context or otherwise one will be created from defaults
-func NewArchive(options *Options, context *aeron.Context) (*Archive, error) {
+func NewArchiveV1(options *Options, context *aeron.Context) (*Archive, error) {
 	var err error
 
 	archive := new(Archive)
@@ -298,7 +302,7 @@ func NewArchive(options *Options, context *aeron.Context) (*Archive, error) {
 	logger.Debugf("Proxy request publication: %#v", archive.Proxy.Publication)
 
 	// And intitiate the connection
-	archive.Control.State.state = ControlStateConnectRequestSent
+	//archive.Control.State.state = ControlStateConnectRequestSent
 	correlationID := nextCorrelationID()
 	logger.Debugf("NewArchive correlationID is %d", correlationID)
 	correlations.Store(correlationID, archive.Control) // For subsequent lookup in the fragment assemblers
@@ -318,38 +322,133 @@ func NewArchive(options *Options, context *aeron.Context) (*Archive, error) {
 	}
 
 	start = time.Now()
-	pollContext := PollContext{archive.Control, correlationID}
+	//pollContext := PollContext{archive.Control, correlationID}
 
-	for archive.Control.State.state != ControlStateConnected && archive.Control.State.err == nil {
-		fragments := archive.Control.poll(
-			func(buf *atomic.Buffer, offset int32, length int32, header *logbuffer.Header) term.ControlledPollAction {
-				ConnectionControlFragmentHandler(&pollContext, buf, offset, length, header)
-				return term.ControlledPollActionContinue
-			}, 1)
-		if fragments > 0 {
-			logger.Debugf("Read %d fragment(s)", fragments)
+	/*
+		for archive.Control.State.state != ControlStateConnected && archive.Control.State.err == nil {
+			fragments := archive.Control.poll(
+				func(buf *atomic.Buffer, offset int32, length int32, header *logbuffer.Header) term.ControlledPollAction {
+					ConnectionControlFragmentHandler(&pollContext, buf, offset, length, header)
+					return term.ControlledPollActionContinue
+				}, 1)
+			if fragments > 0 {
+				logger.Debugf("Read %d fragment(s)", fragments)
+			}
+
+			// Check for timeout
+			if time.Since(start) > archive.Options.Timeout {
+				archive.Control.State.state = ControlStateTimedOut
+				archive.Control.State.err = fmt.Errorf("operation timed out")
+				break
+			} else {
+				archive.Options.IdleStrategy.Idle(0)
+			}
 		}
 
-		// Check for timeout
-		if time.Since(start) > archive.Options.Timeout {
-			archive.Control.State.state = ControlStateTimedOut
-			archive.Control.State.err = fmt.Errorf("operation timed out")
-			break
+		if err = archive.Control.State.err; err != nil {
+			logger.Errorf("Connect failed: %s", err)
+			return nil, err
+		} else if archive.Control.State.state != ControlStateConnected {
+			logger.Error("Connect failed")
 		} else {
-			archive.Options.IdleStrategy.Idle(0)
+			logger.Infof("Archive connection established for sessionId:%d", archive.SessionID)
+		}
+	*/
+
+	return archive, nil
+}
+
+func NewArchiveV2(archiveContext *ArchiveContext, controlResponsePoller *ControlResponsePoller, archiveProxy *Proxy, controlSessionId, archiveId int64) (aeronArchive *Archive) {
+	aeronArchive = new(Archive)
+	aeronArchive.aeronContext = archiveContext.AeronCtx
+
+	// Use the provided options or use our defaults
+	if archiveContext.ArchiveOptions != nil {
+		aeronArchive.Options = archiveContext.ArchiveOptions
+	} else {
+		if aeronArchive.Options == nil {
+			// Create a new set
+			aeronArchive.Options = DefaultOptions()
 		}
 	}
 
-	if err = archive.Control.State.err; err != nil {
-		logger.Errorf("Connect failed: %s", err)
-		return nil, err
-	} else if archive.Control.State.state != ControlStateConnected {
-		logger.Error("Connect failed")
-	} else {
-		logger.Infof("Archive connection established for sessionId:%d", archive.SessionID)
+	// Set RangeChecking
+	rangeChecking = aeronArchive.Options.RangeChecking
+
+	// Set the logging levels
+	logging.SetLevel(aeronArchive.Options.ArchiveLoglevel, "archive")
+	logging.SetLevel(aeronArchive.Options.AeronLoglevel, "aeron")
+	logging.SetLevel(aeronArchive.Options.AeronLoglevel, "memmap")
+	logging.SetLevel(aeronArchive.Options.AeronLoglevel, "driver")
+	logging.SetLevel(aeronArchive.Options.AeronLoglevel, "counters")
+	logging.SetLevel(aeronArchive.Options.AeronLoglevel, "logbuffers")
+	logging.SetLevel(aeronArchive.Options.AeronLoglevel, "buffer")
+	logging.SetLevel(aeronArchive.Options.AeronLoglevel, "rb")
+
+	// Setup the Control (subscriber/response)
+	aeronArchive.Control = new(Control)
+	aeronArchive.Control.Subscription = controlResponsePoller.Subscription
+	aeronArchive.Control.controlResponsePoller = controlResponsePoller
+	aeronArchive.Control.archive = aeronArchive
+
+	// Setup the Proxy (publisher/request)
+	aeronArchive.Proxy.archive = aeronArchive
+
+	// Setup Recording Events (although it's not enabled by default)
+	aeronArchive.Events = new(RecordingEventsAdapter)
+	aeronArchive.Events.archive = aeronArchive
+
+	// Create the listeners and populate
+	aeronArchive.Listeners = new(ArchiveListeners)
+	aeronArchive.Listeners.ErrorListener = LoggingErrorListener
+
+	// In Debug mode initialize our listeners with simple loggers
+	// Note that these actually log at INFO so you can do this manually for INFO if you like
+	if logging.GetLevel("aeronArchive") >= logging.DEBUG {
+		logger.Debugf("Setting logging listeners")
+
+		aeronArchive.Listeners.RecordingEventStartedListener = LoggingRecordingEventStartedListener
+		aeronArchive.Listeners.RecordingEventProgressListener = LoggingRecordingEventProgressListener
+		aeronArchive.Listeners.RecordingEventStoppedListener = LoggingRecordingEventStoppedListener
+
+		aeronArchive.Listeners.RecordingSignalListener = LoggingRecordingSignalListener
+
+		aeronArchive.Listeners.AvailableImageListener = LoggingAvailableImageListener
+		aeronArchive.Listeners.UnavailableImageListener = LoggingUnavailableImageListener
+
+		aeronArchive.Listeners.NewSubscriptionListener = LoggingNewSubscriptionListener
+		aeronArchive.Listeners.NewPublicationListener = LoggingNewPublicationListener
+
+		aeronArchive.aeronContext.NewSubscriptionHandler(aeronArchive.Listeners.NewSubscriptionListener)
+		aeronArchive.aeronContext.NewPublicationHandler(aeronArchive.Listeners.NewPublicationListener)
 	}
 
-	return archive, archive.Control.State.err
+	return
+}
+
+func Connect(ctx *ArchiveContext) (aeronArchive *Archive, err error) {
+	asyncConnect, err := NewAsyncConnect(ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	previousState := asyncConnect.State
+
+	for aeronArchive == nil {
+		aeronArchive, err = asyncConnect.Poll()
+		if err != nil {
+			return nil, err
+		}
+
+		if asyncConnect.State == previousState {
+			asyncConnect.Ctx.IdleStrategy.Idle(0)
+		} else {
+			asyncConnect.Ctx.IdleStrategy.Idle(1)
+			previousState = asyncConnect.State
+		}
+	}
+
+	return
 }
 
 // Close will terminate client conductor and remove all publications and subscriptions from the media driver
