@@ -135,6 +135,11 @@ func (f *FindLastMatchingRecordingRequest) RangeCheck(actingVersion uint16, sche
 			return fmt.Errorf("Range check failed on f.StreamId (%v < %v > %v)", f.StreamIdMinValue(), f.StreamId, f.StreamIdMaxValue())
 		}
 	}
+	for idx, ch := range f.Channel {
+		if ch > 127 {
+			return fmt.Errorf("f.Channel[%d]=%d failed ASCII validation", idx, ch)
+		}
+	}
 	return nil
 }
 
@@ -155,11 +160,15 @@ func (*FindLastMatchingRecordingRequest) SbeSchemaId() (schemaId uint16) {
 }
 
 func (*FindLastMatchingRecordingRequest) SbeSchemaVersion() (schemaVersion uint16) {
-	return 6
+	return 9
 }
 
 func (*FindLastMatchingRecordingRequest) SbeSemanticType() (semanticType []byte) {
 	return []byte("")
+}
+
+func (*FindLastMatchingRecordingRequest) SbeSemanticVersion() (semanticVersion string) {
+	return "5.2"
 }
 
 func (*FindLastMatchingRecordingRequest) ControlSessionIdId() uint16 {

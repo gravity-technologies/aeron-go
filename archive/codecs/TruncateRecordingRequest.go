@@ -118,11 +118,15 @@ func (*TruncateRecordingRequest) SbeSchemaId() (schemaId uint16) {
 }
 
 func (*TruncateRecordingRequest) SbeSchemaVersion() (schemaVersion uint16) {
-	return 6
+	return 9
 }
 
 func (*TruncateRecordingRequest) SbeSemanticType() (semanticType []byte) {
 	return []byte("")
+}
+
+func (*TruncateRecordingRequest) SbeSemanticVersion() (semanticVersion string) {
+	return "5.2"
 }
 
 func (*TruncateRecordingRequest) ControlSessionIdId() uint16 {

@@ -118,11 +118,15 @@ func (*MigrateSegmentsRequest) SbeSchemaId() (schemaId uint16) {
 }
 
 func (*MigrateSegmentsRequest) SbeSchemaVersion() (schemaVersion uint16) {
-	return 6
+	return 9
 }
 
 func (*MigrateSegmentsRequest) SbeSemanticType() (semanticType []byte) {
 	return []byte("")
+}
+
+func (*MigrateSegmentsRequest) SbeSemanticVersion() (semanticVersion string) {
+	return "5.2"
 }
 
 func (*MigrateSegmentsRequest) ControlSessionIdId() uint16 {

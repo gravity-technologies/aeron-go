@@ -131,6 +131,11 @@ func (c *ControlResponse) RangeCheck(actingVersion uint16, schemaVersion uint16)
 			return fmt.Errorf("Range check failed on c.Version (%v < %v > %v)", c.VersionMinValue(), c.Version, c.VersionMaxValue())
 		}
 	}
+	for idx, ch := range c.ErrorMessage {
+		if ch > 127 {
+			return fmt.Errorf("c.ErrorMessage[%d]=%d failed ASCII validation", idx, ch)
+		}
+	}
 	return nil
 }
 
@@ -152,11 +157,15 @@ func (*ControlResponse) SbeSchemaId() (schemaId uint16) {
 }
 
 func (*ControlResponse) SbeSchemaVersion() (schemaVersion uint16) {
-	return 6
+	return 9
 }
 
 func (*ControlResponse) SbeSemanticType() (semanticType []byte) {
 	return []byte("")
+}
+
+func (*ControlResponse) SbeSemanticVersion() (semanticVersion string) {
+	return "5.2"
 }
 
 func (*ControlResponse) ControlSessionIdId() uint16 {

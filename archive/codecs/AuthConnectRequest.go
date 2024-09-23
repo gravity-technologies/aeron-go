@@ -124,6 +124,11 @@ func (a *AuthConnectRequest) RangeCheck(actingVersion uint16, schemaVersion uint
 			return fmt.Errorf("Range check failed on a.Version (%v < %v > %v)", a.VersionMinValue(), a.Version, a.VersionMaxValue())
 		}
 	}
+	for idx, ch := range a.ResponseChannel {
+		if ch > 127 {
+			return fmt.Errorf("a.ResponseChannel[%d]=%d failed ASCII validation", idx, ch)
+		}
+	}
 	return nil
 }
 
@@ -145,11 +150,15 @@ func (*AuthConnectRequest) SbeSchemaId() (schemaId uint16) {
 }
 
 func (*AuthConnectRequest) SbeSchemaVersion() (schemaVersion uint16) {
-	return 6
+	return 9
 }
 
 func (*AuthConnectRequest) SbeSemanticType() (semanticType []byte) {
 	return []byte("")
+}
+
+func (*AuthConnectRequest) SbeSemanticVersion() (semanticVersion string) {
+	return "5.2"
 }
 
 func (*AuthConnectRequest) CorrelationIdId() uint16 {

@@ -10,17 +10,20 @@ import (
 )
 
 type ReplicateRequest2 struct {
-	ControlSessionId   int64
-	CorrelationId      int64
-	SrcRecordingId     int64
-	DstRecordingId     int64
-	StopPosition       int64
-	ChannelTagId       int64
-	SubscriptionTagId  int64
-	SrcControlStreamId int32
-	SrcControlChannel  []uint8
-	LiveDestination    []uint8
-	ReplicationChannel []uint8
+	ControlSessionId     int64
+	CorrelationId        int64
+	SrcRecordingId       int64
+	DstRecordingId       int64
+	StopPosition         int64
+	ChannelTagId         int64
+	SubscriptionTagId    int64
+	SrcControlStreamId   int32
+	FileIoMaxLength      int32
+	ReplicationSessionId int32
+	SrcControlChannel    []uint8
+	LiveDestination      []uint8
+	ReplicationChannel   []uint8
+	EncodedCredentials   []uint8
 }
 
 func (r *ReplicateRequest2) Encode(_m *SbeGoMarshaller, _w io.Writer, doRangeCheck bool) error {
@@ -53,6 +56,12 @@ func (r *ReplicateRequest2) Encode(_m *SbeGoMarshaller, _w io.Writer, doRangeChe
 	if err := _m.WriteInt32(_w, r.SrcControlStreamId); err != nil {
 		return err
 	}
+	if err := _m.WriteInt32(_w, r.FileIoMaxLength); err != nil {
+		return err
+	}
+	if err := _m.WriteInt32(_w, r.ReplicationSessionId); err != nil {
+		return err
+	}
 	if err := _m.WriteUint32(_w, uint32(len(r.SrcControlChannel))); err != nil {
 		return err
 	}
@@ -69,6 +78,12 @@ func (r *ReplicateRequest2) Encode(_m *SbeGoMarshaller, _w io.Writer, doRangeChe
 		return err
 	}
 	if err := _m.WriteBytes(_w, r.ReplicationChannel); err != nil {
+		return err
+	}
+	if err := _m.WriteUint32(_w, uint32(len(r.EncodedCredentials))); err != nil {
+		return err
+	}
+	if err := _m.WriteBytes(_w, r.EncodedCredentials); err != nil {
 		return err
 	}
 	return nil
@@ -131,6 +146,20 @@ func (r *ReplicateRequest2) Decode(_m *SbeGoMarshaller, _r io.Reader, actingVers
 			return err
 		}
 	}
+	if !r.FileIoMaxLengthInActingVersion(actingVersion) {
+		r.FileIoMaxLength = r.FileIoMaxLengthNullValue()
+	} else {
+		if err := _m.ReadInt32(_r, &r.FileIoMaxLength); err != nil {
+			return err
+		}
+	}
+	if !r.ReplicationSessionIdInActingVersion(actingVersion) {
+		r.ReplicationSessionId = r.ReplicationSessionIdNullValue()
+	} else {
+		if err := _m.ReadInt32(_r, &r.ReplicationSessionId); err != nil {
+			return err
+		}
+	}
 	if actingVersion > r.SbeSchemaVersion() && blockLength > r.SbeBlockLength() {
 		io.CopyN(ioutil.Discard, _r, int64(blockLength-r.SbeBlockLength()))
 	}
@@ -173,6 +202,20 @@ func (r *ReplicateRequest2) Decode(_m *SbeGoMarshaller, _r io.Reader, actingVers
 		}
 		r.ReplicationChannel = r.ReplicationChannel[:ReplicationChannelLength]
 		if err := _m.ReadBytes(_r, r.ReplicationChannel); err != nil {
+			return err
+		}
+	}
+
+	if r.EncodedCredentialsInActingVersion(actingVersion) {
+		var EncodedCredentialsLength uint32
+		if err := _m.ReadUint32(_r, &EncodedCredentialsLength); err != nil {
+			return err
+		}
+		if cap(r.EncodedCredentials) < int(EncodedCredentialsLength) {
+			r.EncodedCredentials = make([]uint8, EncodedCredentialsLength)
+		}
+		r.EncodedCredentials = r.EncodedCredentials[:EncodedCredentialsLength]
+		if err := _m.ReadBytes(_r, r.EncodedCredentials); err != nil {
 			return err
 		}
 	}
@@ -225,6 +268,31 @@ func (r *ReplicateRequest2) RangeCheck(actingVersion uint16, schemaVersion uint1
 			return fmt.Errorf("Range check failed on r.SrcControlStreamId (%v < %v > %v)", r.SrcControlStreamIdMinValue(), r.SrcControlStreamId, r.SrcControlStreamIdMaxValue())
 		}
 	}
+	if r.FileIoMaxLengthInActingVersion(actingVersion) {
+		if r.FileIoMaxLength < r.FileIoMaxLengthMinValue() || r.FileIoMaxLength > r.FileIoMaxLengthMaxValue() {
+			return fmt.Errorf("Range check failed on r.FileIoMaxLength (%v < %v > %v)", r.FileIoMaxLengthMinValue(), r.FileIoMaxLength, r.FileIoMaxLengthMaxValue())
+		}
+	}
+	if r.ReplicationSessionIdInActingVersion(actingVersion) {
+		if r.ReplicationSessionId < r.ReplicationSessionIdMinValue() || r.ReplicationSessionId > r.ReplicationSessionIdMaxValue() {
+			return fmt.Errorf("Range check failed on r.ReplicationSessionId (%v < %v > %v)", r.ReplicationSessionIdMinValue(), r.ReplicationSessionId, r.ReplicationSessionIdMaxValue())
+		}
+	}
+	for idx, ch := range r.SrcControlChannel {
+		if ch > 127 {
+			return fmt.Errorf("r.SrcControlChannel[%d]=%d failed ASCII validation", idx, ch)
+		}
+	}
+	for idx, ch := range r.LiveDestination {
+		if ch > 127 {
+			return fmt.Errorf("r.LiveDestination[%d]=%d failed ASCII validation", idx, ch)
+		}
+	}
+	for idx, ch := range r.ReplicationChannel {
+		if ch > 127 {
+			return fmt.Errorf("r.ReplicationChannel[%d]=%d failed ASCII validation", idx, ch)
+		}
+	}
 	return nil
 }
 
@@ -233,7 +301,7 @@ func ReplicateRequest2Init(r *ReplicateRequest2) {
 }
 
 func (*ReplicateRequest2) SbeBlockLength() (blockLength uint16) {
-	return 60
+	return 68
 }
 
 func (*ReplicateRequest2) SbeTemplateId() (templateId uint16) {
@@ -245,11 +313,15 @@ func (*ReplicateRequest2) SbeSchemaId() (schemaId uint16) {
 }
 
 func (*ReplicateRequest2) SbeSchemaVersion() (schemaVersion uint16) {
-	return 6
+	return 9
 }
 
 func (*ReplicateRequest2) SbeSemanticType() (semanticType []byte) {
 	return []byte("")
+}
+
+func (*ReplicateRequest2) SbeSemanticVersion() (semanticVersion string) {
+	return "5.2"
 }
 
 func (*ReplicateRequest2) ControlSessionIdId() uint16 {
@@ -588,6 +660,90 @@ func (*ReplicateRequest2) SrcControlStreamIdNullValue() int32 {
 	return math.MinInt32
 }
 
+func (*ReplicateRequest2) FileIoMaxLengthId() uint16 {
+	return 12
+}
+
+func (*ReplicateRequest2) FileIoMaxLengthSinceVersion() uint16 {
+	return 7
+}
+
+func (r *ReplicateRequest2) FileIoMaxLengthInActingVersion(actingVersion uint16) bool {
+	return actingVersion >= r.FileIoMaxLengthSinceVersion()
+}
+
+func (*ReplicateRequest2) FileIoMaxLengthDeprecated() uint16 {
+	return 0
+}
+
+func (*ReplicateRequest2) FileIoMaxLengthMetaAttribute(meta int) string {
+	switch meta {
+	case 1:
+		return ""
+	case 2:
+		return ""
+	case 3:
+		return ""
+	case 4:
+		return "required"
+	}
+	return ""
+}
+
+func (*ReplicateRequest2) FileIoMaxLengthMinValue() int32 {
+	return math.MinInt32 + 1
+}
+
+func (*ReplicateRequest2) FileIoMaxLengthMaxValue() int32 {
+	return math.MaxInt32
+}
+
+func (*ReplicateRequest2) FileIoMaxLengthNullValue() int32 {
+	return math.MinInt32
+}
+
+func (*ReplicateRequest2) ReplicationSessionIdId() uint16 {
+	return 13
+}
+
+func (*ReplicateRequest2) ReplicationSessionIdSinceVersion() uint16 {
+	return 8
+}
+
+func (r *ReplicateRequest2) ReplicationSessionIdInActingVersion(actingVersion uint16) bool {
+	return actingVersion >= r.ReplicationSessionIdSinceVersion()
+}
+
+func (*ReplicateRequest2) ReplicationSessionIdDeprecated() uint16 {
+	return 0
+}
+
+func (*ReplicateRequest2) ReplicationSessionIdMetaAttribute(meta int) string {
+	switch meta {
+	case 1:
+		return ""
+	case 2:
+		return ""
+	case 3:
+		return ""
+	case 4:
+		return "required"
+	}
+	return ""
+}
+
+func (*ReplicateRequest2) ReplicationSessionIdMinValue() int32 {
+	return math.MinInt32 + 1
+}
+
+func (*ReplicateRequest2) ReplicationSessionIdMaxValue() int32 {
+	return math.MaxInt32
+}
+
+func (*ReplicateRequest2) ReplicationSessionIdNullValue() int32 {
+	return math.MinInt32
+}
+
 func (*ReplicateRequest2) SrcControlChannelMetaAttribute(meta int) string {
 	switch meta {
 	case 1:
@@ -687,5 +843,39 @@ func (ReplicateRequest2) ReplicationChannelCharacterEncoding() string {
 }
 
 func (ReplicateRequest2) ReplicationChannelHeaderLength() uint64 {
+	return 4
+}
+
+func (*ReplicateRequest2) EncodedCredentialsMetaAttribute(meta int) string {
+	switch meta {
+	case 1:
+		return ""
+	case 2:
+		return ""
+	case 3:
+		return ""
+	case 4:
+		return "required"
+	}
+	return ""
+}
+
+func (*ReplicateRequest2) EncodedCredentialsSinceVersion() uint16 {
+	return 8
+}
+
+func (r *ReplicateRequest2) EncodedCredentialsInActingVersion(actingVersion uint16) bool {
+	return actingVersion >= r.EncodedCredentialsSinceVersion()
+}
+
+func (*ReplicateRequest2) EncodedCredentialsDeprecated() uint16 {
+	return 0
+}
+
+func (ReplicateRequest2) EncodedCredentialsCharacterEncoding() string {
+	return "null"
+}
+
+func (ReplicateRequest2) EncodedCredentialsHeaderLength() uint64 {
 	return 4
 }

@@ -16,6 +16,7 @@ type ReplayRequest struct {
 	Position         int64
 	Length           int64
 	ReplayStreamId   int32
+	FileIoMaxLength  int32
 	ReplayChannel    []uint8
 }
 
@@ -41,6 +42,9 @@ func (r *ReplayRequest) Encode(_m *SbeGoMarshaller, _w io.Writer, doRangeCheck b
 		return err
 	}
 	if err := _m.WriteInt32(_w, r.ReplayStreamId); err != nil {
+		return err
+	}
+	if err := _m.WriteInt32(_w, r.FileIoMaxLength); err != nil {
 		return err
 	}
 	if err := _m.WriteUint32(_w, uint32(len(r.ReplayChannel))); err != nil {
@@ -92,6 +96,13 @@ func (r *ReplayRequest) Decode(_m *SbeGoMarshaller, _r io.Reader, actingVersion 
 		r.ReplayStreamId = r.ReplayStreamIdNullValue()
 	} else {
 		if err := _m.ReadInt32(_r, &r.ReplayStreamId); err != nil {
+			return err
+		}
+	}
+	if !r.FileIoMaxLengthInActingVersion(actingVersion) {
+		r.FileIoMaxLength = r.FileIoMaxLengthNullValue()
+	} else {
+		if err := _m.ReadInt32(_r, &r.FileIoMaxLength); err != nil {
 			return err
 		}
 	}
@@ -151,6 +162,16 @@ func (r *ReplayRequest) RangeCheck(actingVersion uint16, schemaVersion uint16) e
 			return fmt.Errorf("Range check failed on r.ReplayStreamId (%v < %v > %v)", r.ReplayStreamIdMinValue(), r.ReplayStreamId, r.ReplayStreamIdMaxValue())
 		}
 	}
+	if r.FileIoMaxLengthInActingVersion(actingVersion) {
+		if r.FileIoMaxLength < r.FileIoMaxLengthMinValue() || r.FileIoMaxLength > r.FileIoMaxLengthMaxValue() {
+			return fmt.Errorf("Range check failed on r.FileIoMaxLength (%v < %v > %v)", r.FileIoMaxLengthMinValue(), r.FileIoMaxLength, r.FileIoMaxLengthMaxValue())
+		}
+	}
+	for idx, ch := range r.ReplayChannel {
+		if ch > 127 {
+			return fmt.Errorf("r.ReplayChannel[%d]=%d failed ASCII validation", idx, ch)
+		}
+	}
 	return nil
 }
 
@@ -159,7 +180,7 @@ func ReplayRequestInit(r *ReplayRequest) {
 }
 
 func (*ReplayRequest) SbeBlockLength() (blockLength uint16) {
-	return 44
+	return 48
 }
 
 func (*ReplayRequest) SbeTemplateId() (templateId uint16) {
@@ -171,11 +192,15 @@ func (*ReplayRequest) SbeSchemaId() (schemaId uint16) {
 }
 
 func (*ReplayRequest) SbeSchemaVersion() (schemaVersion uint16) {
-	return 6
+	return 9
 }
 
 func (*ReplayRequest) SbeSemanticType() (semanticType []byte) {
 	return []byte("")
+}
+
+func (*ReplayRequest) SbeSemanticVersion() (semanticVersion string) {
+	return "5.2"
 }
 
 func (*ReplayRequest) ControlSessionIdId() uint16 {
@@ -427,6 +452,48 @@ func (*ReplayRequest) ReplayStreamIdMaxValue() int32 {
 }
 
 func (*ReplayRequest) ReplayStreamIdNullValue() int32 {
+	return math.MinInt32
+}
+
+func (*ReplayRequest) FileIoMaxLengthId() uint16 {
+	return 8
+}
+
+func (*ReplayRequest) FileIoMaxLengthSinceVersion() uint16 {
+	return 7
+}
+
+func (r *ReplayRequest) FileIoMaxLengthInActingVersion(actingVersion uint16) bool {
+	return actingVersion >= r.FileIoMaxLengthSinceVersion()
+}
+
+func (*ReplayRequest) FileIoMaxLengthDeprecated() uint16 {
+	return 0
+}
+
+func (*ReplayRequest) FileIoMaxLengthMetaAttribute(meta int) string {
+	switch meta {
+	case 1:
+		return ""
+	case 2:
+		return ""
+	case 3:
+		return ""
+	case 4:
+		return "required"
+	}
+	return ""
+}
+
+func (*ReplayRequest) FileIoMaxLengthMinValue() int32 {
+	return math.MinInt32 + 1
+}
+
+func (*ReplayRequest) FileIoMaxLengthMaxValue() int32 {
+	return math.MaxInt32
+}
+
+func (*ReplayRequest) FileIoMaxLengthNullValue() int32 {
 	return math.MinInt32
 }
 

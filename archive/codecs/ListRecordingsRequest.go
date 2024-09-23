@@ -118,11 +118,15 @@ func (*ListRecordingsRequest) SbeSchemaId() (schemaId uint16) {
 }
 
 func (*ListRecordingsRequest) SbeSchemaVersion() (schemaVersion uint16) {
-	return 6
+	return 9
 }
 
 func (*ListRecordingsRequest) SbeSemanticType() (semanticType []byte) {
 	return []byte("")
+}
+
+func (*ListRecordingsRequest) SbeSemanticVersion() (semanticVersion string) {
+	return "5.2"
 }
 
 func (*ListRecordingsRequest) ControlSessionIdId() uint16 {

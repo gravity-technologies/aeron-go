@@ -16,7 +16,7 @@ package codecs
 
 func SemanticVersion() int32 {
 	major := int32(1)
-	minor := int32(5)
+	minor := int32(11)
 	patch := int32(0)
 
 	return (major << 16) + (minor << 8) + patch

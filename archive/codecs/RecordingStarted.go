@@ -140,6 +140,16 @@ func (r *RecordingStarted) RangeCheck(actingVersion uint16, schemaVersion uint16
 			return fmt.Errorf("Range check failed on r.StreamId (%v < %v > %v)", r.StreamIdMinValue(), r.StreamId, r.StreamIdMaxValue())
 		}
 	}
+	for idx, ch := range r.Channel {
+		if ch > 127 {
+			return fmt.Errorf("r.Channel[%d]=%d failed ASCII validation", idx, ch)
+		}
+	}
+	for idx, ch := range r.SourceIdentity {
+		if ch > 127 {
+			return fmt.Errorf("r.SourceIdentity[%d]=%d failed ASCII validation", idx, ch)
+		}
+	}
 	return nil
 }
 
@@ -160,11 +170,15 @@ func (*RecordingStarted) SbeSchemaId() (schemaId uint16) {
 }
 
 func (*RecordingStarted) SbeSchemaVersion() (schemaVersion uint16) {
-	return 6
+	return 9
 }
 
 func (*RecordingStarted) SbeSemanticType() (semanticType []byte) {
 	return []byte("")
+}
+
+func (*RecordingStarted) SbeSemanticVersion() (semanticVersion string) {
+	return "5.2"
 }
 
 func (*RecordingStarted) RecordingIdId() uint16 {

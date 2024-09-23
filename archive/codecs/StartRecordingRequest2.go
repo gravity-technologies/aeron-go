@@ -127,6 +127,11 @@ func (s *StartRecordingRequest2) RangeCheck(actingVersion uint16, schemaVersion 
 	if err := s.AutoStop.RangeCheck(actingVersion, schemaVersion); err != nil {
 		return err
 	}
+	for idx, ch := range s.Channel {
+		if ch > 127 {
+			return fmt.Errorf("s.Channel[%d]=%d failed ASCII validation", idx, ch)
+		}
+	}
 	return nil
 }
 
@@ -147,11 +152,15 @@ func (*StartRecordingRequest2) SbeSchemaId() (schemaId uint16) {
 }
 
 func (*StartRecordingRequest2) SbeSchemaVersion() (schemaVersion uint16) {
-	return 6
+	return 9
 }
 
 func (*StartRecordingRequest2) SbeSemanticType() (semanticType []byte) {
 	return []byte("")
+}
+
+func (*StartRecordingRequest2) SbeSemanticVersion() (semanticVersion string) {
+	return "5.2"
 }
 
 func (*StartRecordingRequest2) ControlSessionIdId() uint16 {

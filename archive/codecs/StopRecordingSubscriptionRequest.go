@@ -102,11 +102,15 @@ func (*StopRecordingSubscriptionRequest) SbeSchemaId() (schemaId uint16) {
 }
 
 func (*StopRecordingSubscriptionRequest) SbeSchemaVersion() (schemaVersion uint16) {
-	return 6
+	return 9
 }
 
 func (*StopRecordingSubscriptionRequest) SbeSemanticType() (semanticType []byte) {
 	return []byte("")
+}
+
+func (*StopRecordingSubscriptionRequest) SbeSemanticVersion() (semanticVersion string) {
+	return "5.2"
 }
 
 func (*StopRecordingSubscriptionRequest) ControlSessionIdId() uint16 {

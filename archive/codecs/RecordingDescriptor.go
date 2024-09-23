@@ -305,6 +305,21 @@ func (r *RecordingDescriptor) RangeCheck(actingVersion uint16, schemaVersion uin
 			return fmt.Errorf("Range check failed on r.StreamId (%v < %v > %v)", r.StreamIdMinValue(), r.StreamId, r.StreamIdMaxValue())
 		}
 	}
+	for idx, ch := range r.StrippedChannel {
+		if ch > 127 {
+			return fmt.Errorf("r.StrippedChannel[%d]=%d failed ASCII validation", idx, ch)
+		}
+	}
+	for idx, ch := range r.OriginalChannel {
+		if ch > 127 {
+			return fmt.Errorf("r.OriginalChannel[%d]=%d failed ASCII validation", idx, ch)
+		}
+	}
+	for idx, ch := range r.SourceIdentity {
+		if ch > 127 {
+			return fmt.Errorf("r.SourceIdentity[%d]=%d failed ASCII validation", idx, ch)
+		}
+	}
 	return nil
 }
 
@@ -325,11 +340,15 @@ func (*RecordingDescriptor) SbeSchemaId() (schemaId uint16) {
 }
 
 func (*RecordingDescriptor) SbeSchemaVersion() (schemaVersion uint16) {
-	return 6
+	return 9
 }
 
 func (*RecordingDescriptor) SbeSemanticType() (semanticType []byte) {
 	return []byte("")
+}
+
+func (*RecordingDescriptor) SbeSemanticVersion() (semanticVersion string) {
+	return "5.2"
 }
 
 func (*RecordingDescriptor) ControlSessionIdId() uint16 {

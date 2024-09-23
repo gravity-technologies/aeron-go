@@ -9,7 +9,7 @@
 DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" >/dev/null 2>&1 && pwd )"
 AERON_DIR=$DIR/../../../aeron
 SBE_DIR=$DIR/../../../simple-binary-encoding
-AGRONA_VERSION=1.12.0
+AGRONA_VERSION=1.23.0
 AGRONA_JAR=`find ~/.gradle/ | grep agrona-$AGRONA_VERSION.jar | head -1`
 
 if [ ! -d "$AERON_DIR" ]

@@ -86,11 +86,15 @@ func (*KeepAliveRequest) SbeSchemaId() (schemaId uint16) {
 }
 
 func (*KeepAliveRequest) SbeSchemaVersion() (schemaVersion uint16) {
-	return 6
+	return 9
 }
 
 func (*KeepAliveRequest) SbeSemanticType() (semanticType []byte) {
 	return []byte("")
+}
+
+func (*KeepAliveRequest) SbeSemanticVersion() (semanticVersion string) {
+	return "5.2"
 }
 
 func (*KeepAliveRequest) ControlSessionIdId() uint16 {
