@@ -75,6 +75,7 @@ const ReceiverWindowLengthParamName = "rcv-wnd"
 const MediaRcvTimestampOffsetParamName = "media-rcv-ts-offset"
 const ChannelRcvTimestampOffsetParamName = "channel-rcv-ts-offset"
 const ChannelSndTimestampOffsetParamName = "channel-snd-ts-offset"
+const ResponseCorrelationIdParamName = "response-correlation-id"
 
 const spyPrefix = SpyQualifier + ":"
 const aeronPrefix = AeronScheme + ":"

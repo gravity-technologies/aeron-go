@@ -27,16 +27,16 @@ type AsyncConnect struct {
 // Archive Connection State used internally for connection establishment
 type AsyncConnectStateEnum uint8
 type AsyncConnectStateValues struct {
-	ADD_PUBLICATION              AsyncConnectStateEnum
-	AWAIT_PUBLICATION_CONNECTED  AsyncConnectStateEnum
-	SEND_CONNECT_REQUEST         AsyncConnectStateEnum
-	AWAIT_SUBSCRIPTION_CONNECTED AsyncConnectStateEnum
-	AWAIT_CONNECT_RESPONSE       AsyncConnectStateEnum
-	SEND_ARCHIVE_ID_REQUEST      AsyncConnectStateEnum
-	AWAIT_ARCHIVE_ID_RESPONSE    AsyncConnectStateEnum
-	DONE                         AsyncConnectStateEnum
-	SEND_CHALLENGE_RESPONSE      AsyncConnectStateEnum
-	AWAIT_CHALLENGE_RESPONSE     AsyncConnectStateEnum
+	ADD_PUBLICATION              AsyncConnectStateEnum // 0
+	AWAIT_PUBLICATION_CONNECTED  AsyncConnectStateEnum // 1
+	SEND_CONNECT_REQUEST         AsyncConnectStateEnum // 2
+	AWAIT_SUBSCRIPTION_CONNECTED AsyncConnectStateEnum // 3
+	AWAIT_CONNECT_RESPONSE       AsyncConnectStateEnum // 4
+	SEND_ARCHIVE_ID_REQUEST      AsyncConnectStateEnum // 5
+	AWAIT_ARCHIVE_ID_RESPONSE    AsyncConnectStateEnum // 6
+	DONE                         AsyncConnectStateEnum // 7
+	SEND_CHALLENGE_RESPONSE      AsyncConnectStateEnum // 8
+	AWAIT_CHALLENGE_RESPONSE     AsyncConnectStateEnum // 9
 }
 
 var State = AsyncConnectStateValues{0, 1, 2, 3, 4, 5, 6, 7, 8, 9}
@@ -53,7 +53,9 @@ func NewAsyncConnect(ctx *ArchiveContext) (*AsyncConnect, error) {
 	}
 	ac.controlResponsePoller = NewControlResponsePoller(subscription, ControlFragmentLimit)
 
-	checkAndSetupResponseChannel(ac.controlResponsePoller.Subscription)
+	if err = ac.checkAndSetupResponseChannel(ac.controlResponsePoller.Subscription); err != nil {
+		return nil, err
+	}
 
 	publicationRegistrationId, err := ac.Ctx.Aeron.AsyncAddExclusivePublication(ac.Ctx.ControlRequestChannel, ac.Ctx.ControlRequestStreamId)
 	if err != nil {
@@ -64,19 +66,23 @@ func NewAsyncConnect(ctx *ArchiveContext) (*AsyncConnect, error) {
 	return ac, nil
 }
 
-func checkAndSetupResponseChannel(subscription *aeron.Subscription) {
-	// TODO: always assumed it's correct for now. Go version assumed so
-	// private static void checkAndSetupResponseChannel(final Context ctx, final Subscription subscription)
-	//
-	//	{
-	//	    if (ChannelUri.isControlModeResponse(ctx.controlResponseChannel()))
-	//	    {
-	//	        final String requestChannel = new ChannelUriStringBuilder(ctx.controlRequestChannel())
-	//	            .responseCorrelationId(subscription.registrationId())
-	//	            .toString();
-	//	        ctx.controlRequestChannel(requestChannel);
-	//	    }
-	//	}
+func (ac *AsyncConnect) checkAndSetupResponseChannel(subscription *aeron.Subscription) error {
+	uri, err := aeron.ParseChannelUri(ac.Ctx.ControlResponseChannel)
+	logger.Debugf("parsed responseChannel uri: %s", uri.String())
+	if err != nil {
+		return err
+	}
+	if uri.Get(aeron.MdcControlModeParamName) == "response" {
+		requestChannelURI, err := aeron.ParseChannelUri(ac.Ctx.ControlRequestChannel)
+		if err != nil {
+			return err
+		}
+		requestChannelURI.Set(aeron.ResponseCorrelationIdParamName, string(subscription.RegistrationID()))
+		ac.Ctx.ControlRequestChannel = requestChannelURI.String()
+		// ac.Ctx.ArchiveOptions.RequestChannel = requestChannelURI.String()
+		logger.Debugf("new requestChannel uri: %s", requestChannelURI.String())
+	}
+	return err
 }
 
 func (ac *AsyncConnect) Poll() (aeronArchive *Archive, err error) {
@@ -215,9 +221,9 @@ func (ac *AsyncConnect) transitionToDone(archiveId int64) (aeronArchive *Archive
 
 func (ac *AsyncConnect) checkDeadline() error {
 	if time.Now().After(ac.deadline) {
-		uriInfo := " subscription.uri=" + ac.Ctx.ArchiveOptions.ResponseChannel
+		uriInfo := " subscription.uri=" + ac.Ctx.ControlResponseChannel
 		if ac.State < 3 {
-			uriInfo = " publication.uri=" + ac.Ctx.ArchiveOptions.RequestChannel
+			uriInfo = " publication.uri=" + ac.Ctx.ControlRequestChannel
 		}
 		return fmt.Errorf("Archive connect timeout: step=%d %s", ac.State, uriInfo)
 	}
