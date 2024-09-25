@@ -6,6 +6,12 @@
 # defaults below so you might consider it more documentation than working
 # script.
 
+# TODO: script is super outdated and need to fix
+# 1. Fix hard-coded jar finding by download from mvnrepository
+# 2. Use sbe-tool jars instead of download src code and build from scratch
+# 3. Fix all bash script warning ($(...) notion instead of legacy backticks, double quote to prevent globbing and word splitting)
+# 4. Find out why it doesn't gen ArchiveIdPacket - need manual code in encoders_compat.go (AGRONA_VERSION:1.23)
+
 DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" >/dev/null 2>&1 && pwd )"
 AERON_DIR=$DIR/../../../aeron
 SBE_DIR=$DIR/../../../simple-binary-encoding
