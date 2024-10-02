@@ -140,7 +140,7 @@ func (control *Control) PollForResponse(correlationId int64, controlSessionId in
 
 // Java - https://github.com/real-logic/aeron/blob/1.46.2/aeron-archive/src/main/java/io/aeron/archive/client/AeronArchive.java#L2309
 func (control *Control) pollNextResponse(correlationId int64, deadline time.Time, poller *ControlResponsePoller, controlSessionId int64) error {
-	control.archive.Options.IdleStrategy.Idle(1)
+	control.archive.Options.IdleStrategy.Reset()
 
 	for {
 		fragments := poller.Poll()
@@ -184,7 +184,7 @@ func (control *Control) PollForSubscriptionDescriptors(correlationId int64, coun
 	deadline := time.Now().Add(control.archive.Options.Timeout)
 	poller := control.RecordingSubscriptionDescriptorPoller()
 	poller.Reset(correlationId, count, consumer)
-	control.archive.Options.IdleStrategy.Idle(1)
+	control.archive.Options.IdleStrategy.Reset()
 
 	for {
 		fragment := poller.Poll()
@@ -227,7 +227,7 @@ func (control *Control) PollForDescriptors(correlationId int64, count int32, con
 	deadline := time.Now().Add(control.archive.Options.Timeout)
 	poller := control.RecordingDescriptorPoller()
 	poller.Reset(correlationId, count, consumer)
-	control.archive.Options.IdleStrategy.Idle(1)
+	control.archive.Options.IdleStrategy.Reset()
 
 	for {
 		fragment := poller.Poll()

@@ -940,6 +940,10 @@ func (agent *ClusteredServiceAgent) IdleStrategy() idlestrategy.Idler {
 	return agent
 }
 
+func (agent *ClusteredServiceAgent) Reset() {
+	agent.opts.IdleStrategy.Reset()
+}
+
 func (agent *ClusteredServiceAgent) ScheduleTimer(correlationId int64, deadline int64) bool {
 	if err := agent.checkForValidInvocation(); err != nil {
 		logger.Errorf("ScheduleTimer: error in checkForValidInvocation correlationId=%d", correlationId)

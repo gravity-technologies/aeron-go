@@ -282,7 +282,7 @@ func Connect(ctx *ArchiveContext) (aeronArchive *Archive, err error) {
 			asyncConnect.Ctx.IdleStrategy.Idle(0)
 		} else {
 			logger.Infof("archive asyncConnect state transition: %d -> %d", previousStep, asyncConnect.State)
-			asyncConnect.Ctx.IdleStrategy.Idle(1)
+			asyncConnect.Ctx.IdleStrategy.Reset()
 			previousStep = asyncConnect.State
 		}
 	}
