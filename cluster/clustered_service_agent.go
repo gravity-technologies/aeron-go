@@ -552,6 +552,18 @@ func (agent *ClusteredServiceAgent) joinActiveLog(event *activeLogEvent) error {
 	agent.memberId = event.memberId
 	agent.markFile.flyweight.MemberId.Set(agent.memberId)
 
+	if Leader == event.role {
+		for _, session := range agent.sessions {
+			// TODO: issue-6 for responder conf check - always true for now
+			if !event.isStartup {
+				if err = session.Connect(agent.aeronClient); err != nil {
+					return err
+				}
+			}
+			session.(*containerClientSession).ResetClosing()
+		}
+	}
+
 	agent.setRole(event.role)
 	return nil
 }
@@ -620,8 +632,12 @@ func (agent *ClusteredServiceAgent) onSessionOpen(
 		if err != nil {
 			return err
 		}
-		// TODO: looks like we only want to connect if this is the leader
-		// currently always connecting
+		// TODO: issue-6 for responder conf check - always true for now
+		if Leader == agent.role {
+			if err = session.Connect(agent.aeronClient); err != nil {
+				return err
+			}
+		}
 
 		agent.sessions[session.id] = session
 		agent.service.OnSessionOpen(session, timestamp)
@@ -865,17 +881,37 @@ func (agent *ClusteredServiceAgent) getClientSession(id int64) (ClientSession, b
 	return session, ok
 }
 
-func (agent *ClusteredServiceAgent) closeClientSession(id int64) {
+func (agent *ClusteredServiceAgent) closeClientSession(id int64) bool {
 	if err := agent.checkForValidInvocation(); err != nil {
 		logger.Errorf("closeClientSession: error in checkForValidInvocation id=%d", id)
-		return
+		return false
 	}
-	if _, ok := agent.sessions[id]; ok {
-		// TODO: check if session already closed
-		agent.consensusModuleProxy.closeSessionRequest(id)
-	} else {
+	session, ok := agent.sessions[id]
+	if !ok {
 		logger.Errorf("closeClientSession: unknown session id=%d", id)
+		return false
 	}
+
+	clientSession, ok := session.(*containerClientSession)
+	if !ok {
+		logger.Errorf("closeClientSession: not a valid containerClientSession")
+		return false
+	}
+	if clientSession.isClosing {
+		return true
+	}
+
+	attempts := 3
+	for attempts > 0 {
+		if agent.consensusModuleProxy.closeSessionRequest(id) {
+			clientSession.MarkClosing()
+			return true
+		}
+		agent.Idle(0)
+		attempts--
+	}
+
+	return false
 }
 
 func closeArchive(arch *archive.Archive) {
