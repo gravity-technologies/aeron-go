@@ -13,6 +13,8 @@
 package cluster
 
 import (
+	"fmt"
+
 	"github.com/lirm/aeron-go/aeron"
 	"github.com/lirm/aeron-go/aeron/atomic"
 	"github.com/lirm/aeron-go/aeron/logbuffer/term"
@@ -27,6 +29,7 @@ type ClientSession interface {
 	ResponseStreamId() int32
 	ResponseChannel() string
 	EncodedPrincipal() []byte
+	Connect(aeronClient *aeron.Aeron) error
 	Close()
 	// TODO: the other close methods are not part of interface.
 	// I don't understand the closing bool implementation and why it is needed
@@ -44,6 +47,7 @@ type containerClientSession struct {
 	encodedPrincipal []byte
 	agent            *ClusteredServiceAgent
 	response         *aeron.Publication
+	isClosing        bool
 }
 
 func newContainerClientSession(
@@ -53,17 +57,12 @@ func newContainerClientSession(
 	encodedPrincipal []byte,
 	agent *ClusteredServiceAgent,
 ) (*containerClientSession, error) {
-	pub, err := agent.aeronClient.AddPublication(responseChannel, responseStreamId)
-	if err != nil {
-		return nil, err
-	}
 	return &containerClientSession{
 		id:               id,
 		responseStreamId: responseStreamId,
 		responseChannel:  responseChannel,
 		encodedPrincipal: encodedPrincipal,
 		agent:            agent,
-		response:         pub,
 	}, nil
 }
 
@@ -81,6 +80,15 @@ func (s *containerClientSession) ResponseChannel() string {
 
 func (s *containerClientSession) EncodedPrincipal() []byte {
 	return s.encodedPrincipal
+}
+
+func (s *containerClientSession) Connect(aeronClient *aeron.Aeron) error {
+	pub, err := aeronClient.AddPublication(s.responseChannel, s.responseStreamId)
+	if err != nil {
+		return fmt.Errorf("failed to connect session response publication: %s", err)
+	}
+	s.response = pub
+	return nil
 }
 
 func (s *containerClientSession) Close() {
@@ -110,4 +118,16 @@ func (s *containerClientSession) Offer(
 		length,
 		reservedValueSupplier,
 	)
+}
+
+func (s *containerClientSession) IsClosing() bool {
+	return s.isClosing
+}
+
+func (s *containerClientSession) MarkClosing() {
+	s.isClosing = true
+}
+
+func (s *containerClientSession) ResetClosing() {
+	s.isClosing = false
 }
