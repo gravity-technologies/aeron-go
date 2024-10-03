@@ -14,6 +14,7 @@ package cluster
 
 import (
 	"bytes"
+
 	"github.com/lirm/aeron-go/aeron"
 	"github.com/lirm/aeron-go/aeron/atomic"
 	"github.com/lirm/aeron-go/aeron/logbuffer"
@@ -149,13 +150,8 @@ func (adapter *boundedLogAdapter) onMessage(
 				e.TermBaseLogPosition, e.LeaderMemberId, e.LogSessionId, e.TimeUnit, e.AppVersion)
 		}
 	case membershipChangeTemplateId:
-		e := codecs.MembershipChangeEvent{}
-		buf := toByteBuffer(buffer, offset, length)
-		if err := e.Decode(adapter.marshaller, buf, version, blockLength, adapter.options.RangeChecking); err != nil {
-			logger.Errorf("boundedLogAdapter: membership change event decode error: %v", err)
-		} else {
-			adapter.agent.onMembershipChange(e.LogPosition, e.Timestamp, e.ChangeType, e.MemberId)
-		}
+		// Removed Dynamic Join.
+		return
 	case SessionMessageHeaderTemplateId:
 		if length < SessionMessageHeaderLength {
 			logger.Errorf("received invalid session message - length: %d", length)
