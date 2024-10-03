@@ -151,7 +151,7 @@ func (adapter *boundedLogAdapter) onMessage(
 		}
 	case membershipChangeTemplateId:
 		// Removed Dynamic Join.
-		return
+		logger.Debug("boundedLogAdapter: ignore membershipChange event")
 	case SessionMessageHeaderTemplateId:
 		if length < SessionMessageHeaderLength {
 			logger.Errorf("received invalid session message - length: %d", length)
