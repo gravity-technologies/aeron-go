@@ -55,6 +55,7 @@ type Publication struct {
 	positionBitsToShift      int32
 	pubLimit                 Position
 	channelStatusIndicatorID int32
+	termBufferLength         int32
 
 	isClosed atomic.Bool
 	metaData *logbuffer.LogBufferMetaData
@@ -73,6 +74,7 @@ func NewPublication(logBuffers *logbuffer.LogBuffers) *Publication {
 	pub.maxMessageLength = logbuffer.ComputeMaxMessageLength(termBufferCapacity)
 	pub.positionBitsToShift = int32(util.NumberOfTrailingZeroes(uint32(termBufferCapacity)))
 	pub.maxPossiblePosition = int64(termBufferCapacity) * (1 << 31)
+	pub.termBufferLength = logBuffers.TermLength()
 
 	pub.isClosed.Set(false)
 
@@ -83,6 +85,11 @@ func NewPublication(logBuffers *logbuffer.LogBuffers) *Publication {
 	}
 
 	return pub
+}
+
+// TermBufferLength returns the length in bytes for each term partition in the log buffer.
+func (pub *Publication) TermBufferLength() int32 {
+	return pub.termBufferLength
 }
 
 // ChannelStatusID returns the counter used to represent the channel status

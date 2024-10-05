@@ -28,10 +28,11 @@ var logger = logging.MustGetLogger("logbuffers")
 
 // LogBuffers is the struct providing access to the file or files representing the terms containing the ring buffer
 type LogBuffers struct {
-	mmapFiles []*memmap.File
-	buffers   [PartitionCount + 1]atomic.Buffer
-	meta      LogBufferMetaData
-	refCount  int
+	mmapFiles  []*memmap.File
+	buffers    [PartitionCount + 1]atomic.Buffer
+	meta       LogBufferMetaData
+	refCount   int
+	termLength int32
 }
 
 // Wrap is the factory method wrapping the LogBuffers structure around memory mapped file
@@ -42,6 +43,8 @@ func Wrap(fileName string) *LogBuffers {
 	termLength := computeTermLength(int32(logLength))
 
 	checkTermLength(termLength)
+
+	buffers.termLength = termLength
 
 	if logLength < maxSingleMappingSize {
 		mmap, err := memmap.MapExisting(fileName, 0, 0)
@@ -134,4 +137,8 @@ func (logBuffers *LogBuffers) IncRef() int {
 func (logBuffers *LogBuffers) DecRef() int {
 	logBuffers.refCount--
 	return logBuffers.refCount
+}
+
+func (logBuffers *LogBuffers) TermLength() int32 {
+	return logBuffers.termLength
 }
