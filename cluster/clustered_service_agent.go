@@ -83,6 +83,9 @@ type ClusteredServiceAgent struct {
 	requestedAckPosition     int64
 	activeLifecycleCallback  LifeCycleCallback
 	signalChan               chan os.Signal
+
+	// errorDuringExecution field now indicates terminal/fatal state
+	errorDuringExecution error
 }
 
 func NewClusteredServiceAgent(
@@ -186,14 +189,21 @@ func (agent *ClusteredServiceAgent) StartAndRunWithGracefulShutdown() error {
 	return agent.StartAndRun()
 }
 
-func (agent *ClusteredServiceAgent) StartAndRun() error {
-	if err := agent.OnStart(); err != nil {
-		return err
+func (agent *ClusteredServiceAgent) StartAndRun() (err error) {
+	if err = agent.OnStart(); err != nil {
+		return
 	}
 	for agent.isServiceActive {
-		agent.opts.IdleStrategy.Idle(agent.DoWork())
+		if agent.errorDuringExecution != nil {
+			return agent.errorDuringExecution
+		}
+		workCount, err := agent.DoWork()
+		if err != nil {
+			return err
+		}
+		agent.opts.IdleStrategy.Idle(workCount)
 	}
-	return nil
+	return
 }
 
 func (agent *ClusteredServiceAgent) OnStart() error {
@@ -246,13 +256,21 @@ func (agent *ClusteredServiceAgent) recoverState() error {
 
 	ackId := agent.getAndIncrementNextAckId()
 	logger.Debugf("ack :: recoveryState :: start :: ackId=%d, clusterTime=%d, clientId=%d, serviceId=%d", ackId, agent.clusterTime, agent.aeronClient.ClientID(), agent.opts.ServiceId)
-	for !agent.consensusModuleProxy.ack(
-		agent.logPosition,
-		agent.clusterTime,
-		ackId,
-		agent.aeronClient.ClientID(),
-		agent.opts.ServiceId,
-	) {
+	for {
+		ok, err := agent.consensusModuleProxy.ack(
+			agent.logPosition,
+			agent.clusterTime,
+			ackId,
+			agent.aeronClient.ClientID(),
+			agent.opts.ServiceId,
+		)
+		if err != nil {
+			logger.Errorf("recoveryState: ack : %s", err)
+			return err
+		}
+		if ok {
+			break
+		}
 		agent.Idle(0)
 	}
 	logger.Debugf("ack :: recoveryState :: end :: ackId=%d, clusterTime=%d, clientId=%d, serviceId=%d", ackId, agent.clusterTime, agent.aeronClient.ClientID(), agent.opts.ServiceId)
@@ -354,41 +372,46 @@ func (agent *ClusteredServiceAgent) addSessionFromSnapshot(session *containerCli
 	agent.sessions[session.id] = session
 }
 
-func (agent *ClusteredServiceAgent) checkForClockTick() bool {
+func (agent *ClusteredServiceAgent) checkForClockTick() (bool, error) {
 	if agent.aeronClient.IsClosed() {
-		logger.Error("agent termination exception - unexpected Aeron close")
-		return false
+		err := &AgentTerminationError{"unexpected Aeron close"}
+		logger.Error(err)
+		return false, err
 	}
 	nowMs := time.Now().UnixMilli()
 	if agent.cachedTimeMs != nowMs {
 		agent.cachedTimeMs = nowMs
 
 		if agent.aeronClient.IsClosed() {
-			logger.Error("agent termination exception - unexpected Aeron close")
-			return false
+			err := &AgentTerminationError{"unexpected Aeron close"}
+			logger.Error(err)
+			return false, err
 		}
 
 		if agent.commitPosition != nil && agent.commitPosition.IsClosed() {
-			logger.Error("cluster termination exception - commit-pos counter unexpectedly closed, terminating")
-			return false
+			err := &ClusterTerminationError{"cluster termination exception - commit-pos counter unexpectedly closed, terminating"}
+			logger.Error(err)
+			return false, err
 		}
 
 		if nowMs > agent.markFileUpdateDeadlineMs {
 			agent.markFileUpdateDeadlineMs = nowMs + markFileUpdateIntervalMs
 			agent.markFile.UpdateActivityTimestamp(nowMs)
 		}
-		return true
+		return true, nil
 	}
-	return false
+	return false, nil
 }
 
-func (agent *ClusteredServiceAgent) pollServiceAdapter() {
-	agent.serviceAdapter.poll()
+func (agent *ClusteredServiceAgent) pollServiceAdapter() (workCount int, err error) {
+	workCount = agent.serviceAdapter.poll()
 
 	if agent.activeLogEvent != nil && agent.logAdapter.image == nil {
 		event := agent.activeLogEvent
 		agent.activeLogEvent = nil
-		agent.joinActiveLog(event)
+		if err := agent.joinActiveLog(event); err != nil {
+			return 0, err
+		}
 	}
 
 	if agent.terminationPosition != NullPosition && agent.logPosition >= agent.terminationPosition {
@@ -404,12 +427,21 @@ func (agent *ClusteredServiceAgent) pollServiceAdapter() {
 		}
 		ackId := agent.getAndIncrementNextAckId()
 		logger.Debugf("ack :: pollServiceAdapter :: start :: ackId=%d, clusterTime=%d, clientId=%d, serviceId=%d", ackId, agent.clusterTime, agent.aeronClient.ClientID(), agent.opts.ServiceId)
-		for !agent.consensusModuleProxy.ack(agent.logPosition, agent.clusterTime, ackId, NullValue, agent.opts.ServiceId) {
+		for {
+			ok, err := agent.consensusModuleProxy.ack(agent.logPosition, agent.clusterTime, ackId, NullValue, agent.opts.ServiceId)
+			if err != nil {
+				logger.Errorf("pollServiceAdapter : ack : %s", err)
+				return 0, err
+			}
+			if ok {
+				break
+			}
 			agent.Idle(0)
 		}
 		logger.Debugf("ack :: pollServiceAdapter :: end :: ackId=%d, clusterTime=%d, clientId=%d, serviceId=%d", ackId, agent.clusterTime, agent.aeronClient.ClientID(), agent.opts.ServiceId)
 		agent.requestedAckPosition = NullPosition
 	}
+	return
 }
 
 // We need to call this on end of each StartAndRun() like how java does it with finally
@@ -451,13 +483,22 @@ func (agent *ClusteredServiceAgent) terminate() {
 	attempts := 5
 	ackId := agent.getAndIncrementNextAckId()
 	logger.Debugf("ack :: terminate :: start :: ackId=%d, clusterTime=%d, clientId=%d, serviceId=%d", ackId, agent.clusterTime, agent.aeronClient.ClientID(), agent.opts.ServiceId)
-	for attempts > 0 && !agent.consensusModuleProxy.ack(
-		agent.logPosition,
-		agent.clusterTime,
-		ackId,
-		NullValue,
-		agent.opts.ServiceId,
-	) {
+	for attempts > 0 {
+		ok, err := agent.consensusModuleProxy.ack(
+			agent.logPosition,
+			agent.clusterTime,
+			ackId,
+			NullValue,
+			agent.opts.ServiceId,
+		)
+		if err != nil {
+			logger.Errorf("terminate : ack : %s", err)
+			agent.errorDuringExecution = err
+			return
+		}
+		if ok {
+			break
+		}
 		attempts--
 		agent.Idle(0)
 	}
@@ -465,22 +506,28 @@ func (agent *ClusteredServiceAgent) terminate() {
 	agent.terminationPosition = NullPosition
 }
 
-func (agent *ClusteredServiceAgent) DoWork() int {
-	work := 0
-
-	if agent.checkForClockTick() {
-		agent.pollServiceAdapter()
+func (agent *ClusteredServiceAgent) DoWork() (workCount int, err error) {
+	ok, err := agent.checkForClockTick()
+	if err != nil {
+		// TODO:  check AgentTerminationError + runTerminationHook()
+		return
+	}
+	if ok {
+		workCount, err = agent.pollServiceAdapter()
+		if err != nil {
+			return
+		}
 	}
 
 	if agent.logAdapter.image != nil {
 		polled := agent.logAdapter.poll(agent.commitPosition.Get())
-		work += polled
+		workCount += polled
 		if polled == 0 && agent.logAdapter.isDone() {
 			agent.closeLog()
 		}
 	}
 
-	return work
+	return
 }
 
 func (agent *ClusteredServiceAgent) onJoinLog(
@@ -540,13 +587,21 @@ func (agent *ClusteredServiceAgent) joinActiveLog(event *activeLogEvent) error {
 
 	ackId := agent.getAndIncrementNextAckId()
 	logger.Debugf("ack :: joinActiveLog :: start :: ackId=%d, clusterTime=%d, clientId=%d, serviceId=%d", ackId, agent.clusterTime, agent.aeronClient.ClientID(), agent.opts.ServiceId)
-	for !agent.consensusModuleProxy.ack(
-		event.logPosition,
-		agent.clusterTime,
-		ackId,
-		NullValue,
-		agent.opts.ServiceId,
-	) {
+	for {
+		ok, err := agent.consensusModuleProxy.ack(
+			event.logPosition,
+			agent.clusterTime,
+			ackId,
+			NullValue,
+			agent.opts.ServiceId,
+		)
+		if err != nil {
+			logger.Errorf("joinActiveLog: ack : %s", err)
+			return err
+		}
+		if ok {
+			break
+		}
 		agent.Idle(0)
 	}
 	logger.Debugf("ack :: joinActiveLog :: end :: ackId=%d, clusterTime=%d, clientId=%d, serviceId=%d", ackId, agent.clusterTime, agent.aeronClient.ClientID(), agent.opts.ServiceId)
@@ -736,11 +791,24 @@ func (agent *ClusteredServiceAgent) executeAction(
 
 		ackId := agent.getAndIncrementNextAckId()
 		logger.Debugf("ack :: executeAction :: start :: ackId=%d, clusterTime=%d, recordingId=%d, serviceId=%d", ackId, agent.clusterTime, recordingId, agent.opts.ServiceId)
-		for !agent.consensusModuleProxy.ack(logPosition, agent.clusterTime, ackId, recordingId, agent.opts.ServiceId) {
+		for {
+			ok, err := agent.consensusModuleProxy.ack(logPosition, agent.clusterTime, ackId, recordingId, agent.opts.ServiceId)
+			if err != nil {
+				logger.Errorf("executeAction: ack : %s", err)
+				// agent.errorDuringExecution = err
+			}
+			if ok {
+				break
+			}
 			agent.Idle(0)
 		}
 		logger.Debugf("ack :: executeAction :: end :: ackId=%d, clusterTime=%d, recordingId=%d, serviceId=%d", ackId, agent.clusterTime, recordingId, agent.opts.ServiceId)
 	}
+	// In Java this func does a rethrow unchecked exception RuntimeException where
+	// it propagates to the stack till it reaches a barrier. Most likely an
+	// aborting type handling. Though it looks like it still allows continue
+	// from log if snapshot throws exception like in this example
+	// https://github.com/real-logic/aeron/blob/release/1.46.x/aeron-system-tests/src/test/java/io/aeron/cluster/MultiClusteredServicesTest.java#L88
 }
 
 func (agent *ClusteredServiceAgent) onTimerEvent(
@@ -753,18 +821,19 @@ func (agent *ClusteredServiceAgent) onTimerEvent(
 	agent.service.OnTimerEvent(correlationId, timestamp)
 }
 
-func (agent *ClusteredServiceAgent) onMembershipChange(
-	logPos int64,
-	timestamp int64,
-	changeType codecs.ChangeTypeEnum,
-	memberId int32,
-) {
-	agent.logPosition = logPos
-	agent.clusterTime = timestamp
-	if memberId == agent.memberId && changeType == codecs.ChangeType.QUIT {
-		agent.terminate()
-	}
-}
+// @Deprecated
+// func (agent *ClusteredServiceAgent) onMembershipChange(
+// 	logPos int64,
+// 	timestamp int64,
+// 	changeType codecs.ChangeTypeEnum,
+// 	memberId int32,
+// ) {
+// 	agent.logPosition = logPos
+// 	agent.clusterTime = timestamp
+// 	if memberId == agent.memberId && changeType == codecs.ChangeType.QUIT {
+// 		agent.terminate()
+// 	}
+// }
 
 func (agent *ClusteredServiceAgent) takeSnapshot(logPos int64, leadershipTermId int64) (int64, error) {
 	arch, err := archive.NewArchive(agent.opts.ArchiveOptions, agent.aeronCtx)
@@ -797,7 +866,10 @@ func (agent *ClusteredServiceAgent) takeSnapshot(logPos int64, leadershipTermId 
 	if err := snapshotTaker.markEnd(logPos, leadershipTermId, agent.timeUnit, agent.opts.AppVersion); err != nil {
 		return NullValue, err
 	}
-	agent.checkForClockTick()
+	if _, err := agent.checkForClockTick(); err != nil {
+		return NullValue, err
+
+	}
 	if _, err := arch.PollForErrorResponse(); err != nil {
 		var archiveErr *archive.ArchiveError
 		if errors.As(err, &archiveErr) {
@@ -911,12 +983,16 @@ func (agent *ClusteredServiceAgent) closeClientSession(id int64) bool {
 
 	attempts := 3
 	for attempts > 0 {
-		if agent.consensusModuleProxy.closeSessionRequest(id) {
+		ok, err := agent.consensusModuleProxy.closeSessionRequest(id)
+		if err != nil {
+			logger.Errorf("closeClientSession: unable to send closeSessionRequest")
+		}
+		if ok {
 			clientSession.MarkClosing()
 			return true
 		}
-		agent.Idle(0)
 		attempts--
+		agent.Idle(0)
 	}
 
 	return false
@@ -946,7 +1022,10 @@ func closePublication(pub *aeron.Publication) {
 func (agent *ClusteredServiceAgent) Idle(workCount int) {
 	agent.opts.IdleStrategy.Idle(workCount)
 	if workCount <= 0 {
-		agent.checkForClockTick()
+		_, err := agent.checkForClockTick()
+		if err != nil {
+			agent.errorDuringExecution = err
+		}
 	}
 }
 
@@ -979,28 +1058,46 @@ func (agent *ClusteredServiceAgent) IdleStrategy() idlestrategy.Idler {
 func (agent *ClusteredServiceAgent) ScheduleTimer(correlationId int64, deadline int64) bool {
 	if err := agent.checkForValidInvocation(); err != nil {
 		logger.Errorf("ScheduleTimer: error in checkForValidInvocation correlationId=%d", correlationId)
+		agent.errorDuringExecution = err
 		return false
 	}
-	return agent.consensusModuleProxy.scheduleTimer(correlationId, deadline)
+	ok, err := agent.consensusModuleProxy.scheduleTimer(correlationId, deadline)
+	if err != nil {
+		agent.errorDuringExecution = err
+		return false
+	}
+	return ok
 }
 
 func (agent *ClusteredServiceAgent) CancelTimer(correlationId int64) bool {
 	if err := agent.checkForValidInvocation(); err != nil {
 		logger.Errorf("CancelTimer: error in checkForValidInvocation correlationId=%d", correlationId)
+		agent.errorDuringExecution = err
 		return false
 	}
-	return agent.consensusModuleProxy.cancelTimer(correlationId)
+	ok, err := agent.consensusModuleProxy.cancelTimer(correlationId)
+	if err != nil {
+		agent.errorDuringExecution = err
+		return false
+	}
+	return ok
 }
 
 func (agent *ClusteredServiceAgent) Offer(buffer *atomic.Buffer, offset, length int32) int64 {
 	if err := agent.checkForValidInvocation(); err != nil {
 		logger.Errorf("Offer: error in checkForValidInvocation offset=%d length=%d", offset, length)
+		agent.errorDuringExecution = err
 		return NullValue
 	}
 	hdrBuf := agent.sessionMsgHdrBuffer
 	hdrBuf.PutInt64(SBEHeaderLength+8, int64(agent.opts.ServiceId))
 	hdrBuf.PutInt64(SBEHeaderLength+16, agent.clusterTime)
-	return agent.consensusModuleProxy.Offer2(hdrBuf, 0, hdrBuf.Capacity(), buffer, offset, length)
+	position, err := agent.consensusModuleProxy.Offer2(hdrBuf, 0, hdrBuf.Capacity(), buffer, offset, length)
+	if err != nil {
+		agent.errorDuringExecution = err
+		return NullValue
+	}
+	return position
 }
 
 func (agent *ClusteredServiceAgent) OnRequestServiceAck(logPosition int64) {
