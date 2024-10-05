@@ -98,8 +98,7 @@ func (loader *snapshotLoader) onFragment(
 			}
 
 		case codecs.SnapshotMark.SECTION, codecs.SnapshotMark.NullValue:
-			loader.err = fmt.Errorf("unexpected snapshot mark, pos=%d inSnapshot=%v mark=%v", header.Position(), loader.inSnapshot, marker.Mark)
-			loader.isDone = true
+			logger.Debugf("received snapshot mark, pos=%d inSnapshot=%v mark=%v", header.Position(), loader.inSnapshot, marker.Mark)
 		}
 
 	case clientSessionTemplateId:
