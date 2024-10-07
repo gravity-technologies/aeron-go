@@ -43,7 +43,7 @@ func (proxy *consensusModuleProxy) ack(
 	ackID int64,
 	relevantID int64,
 	serviceID int32,
-) bool {
+) (bool, error) {
 	// Create a packet and send it
 	bytes, err := codecs.ServiceAckRequestPacket(
 		proxy.marshaller,
@@ -55,16 +55,16 @@ func (proxy *consensusModuleProxy) ack(
 		serviceID,
 	)
 	if err != nil {
-		panic(err)
+		return false, err
 	}
 
 	buffer := atomic.MakeBuffer(bytes)
-	return proxy.offer(buffer, 0, buffer.Capacity()) >= 0
+	return proxy.offerAndCheck(buffer, 0, buffer.Capacity())
 }
 
 func (proxy *consensusModuleProxy) closeSessionRequest(
 	clusterSessionId int64,
-) bool {
+) (bool, error) {
 	// Create a packet and send it
 	bytes, err := codecs.CloseSessionRequestPacket(
 		proxy.marshaller,
@@ -72,23 +72,23 @@ func (proxy *consensusModuleProxy) closeSessionRequest(
 		clusterSessionId,
 	)
 	if err != nil {
-		panic(err)
+		return false, err
 	}
 	buffer := atomic.MakeBuffer(bytes)
-	return proxy.offer(buffer, 0, buffer.Capacity()) >= 0
+	return proxy.offerAndCheck(buffer, 0, buffer.Capacity())
 }
 
-func (proxy *consensusModuleProxy) scheduleTimer(correlationId int64, deadline int64) bool {
+func (proxy *consensusModuleProxy) scheduleTimer(correlationId int64, deadline int64) (bool, error) {
 	buf := proxy.initBuffer(scheduleTimerTemplateId, scheduleTimerBlockLength)
 	buf.PutInt64(SBEHeaderLength, correlationId)
 	buf.PutInt64(SBEHeaderLength+8, deadline)
-	return proxy.offer(buf, 0, SBEHeaderLength+scheduleTimerBlockLength) >= 0
+	return proxy.offerAndCheck(buf, 0, SBEHeaderLength+scheduleTimerBlockLength)
 }
 
-func (proxy *consensusModuleProxy) cancelTimer(correlationId int64) bool {
+func (proxy *consensusModuleProxy) cancelTimer(correlationId int64) (bool, error) {
 	buf := proxy.initBuffer(cancelTimerTemplateId, cancelTimerBlockLength)
 	buf.PutInt64(SBEHeaderLength, correlationId)
-	return proxy.offer(buf, 0, SBEHeaderLength+cancelTimerBlockLength) >= 0
+	return proxy.offerAndCheck(buf, 0, SBEHeaderLength+cancelTimerBlockLength)
 }
 
 func (proxy *consensusModuleProxy) initBuffer(templateId uint16, blockLength uint16) *atomic.Buffer {
@@ -102,23 +102,46 @@ func (proxy *consensusModuleProxy) initBuffer(templateId uint16, blockLength uin
 
 func (proxy *consensusModuleProxy) offer(buffer *atomic.Buffer, offset, length int32) int64 {
 	result := proxy.publication.Offer(buffer, offset, length, nil)
-	checkResult(result)
 	return result
 }
 
-func checkResult(result int64) {
-	if result == aeron.NotConnected || result == aeron.PublicationClosed || result == aeron.MaxPositionExceeded {
-		panic(fmt.Sprintf("unexpected publication state, result=%d", result))
+func (proxy *consensusModuleProxy) offerAndCheck(buffer *atomic.Buffer, offset, length int32) (bool, error) {
+	position := proxy.publication.Offer(buffer, offset, length, nil)
+	// TODO: GoLang is >= or Java > ?
+	if position > 0 {
+		return true, nil
 	}
+	if err := checkResult(position, proxy.publication); err != nil {
+		return false, err
+	}
+	return false, nil
+}
+
+func checkResult(position int64, publication *aeron.Publication) error {
+	if aeron.NotConnected == position {
+		return &ClusterError{"publication is not connected"}
+	}
+
+	if aeron.PublicationClosed == position {
+		return &ClusterError{"publication is closed"}
+	}
+
+	if aeron.MaxPositionExceeded == position {
+		return &ClusterError{fmt.Sprintf("publication at max position: term-length=%d", publication.TermBufferLength())}
+	}
+
+	return nil
 }
 
 func (proxy *consensusModuleProxy) Offer2(
 	bufferOne *atomic.Buffer, offsetOne int32, lengthOne int32,
 	bufferTwo *atomic.Buffer, offsetTwo int32, lengthTwo int32,
-) int64 {
+) (int64, error) {
 	result := proxy.publication.Offer2(bufferOne, offsetOne, lengthOne, bufferTwo, offsetTwo, lengthTwo, nil)
 	if result < 0 {
-		checkResult(result)
+		if err := checkResult(result, proxy.publication); err != nil {
+			return NullValue, err
+		}
 	}
-	return result
+	return result, nil
 }
