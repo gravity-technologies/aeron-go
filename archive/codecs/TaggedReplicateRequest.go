@@ -188,6 +188,16 @@ func (t *TaggedReplicateRequest) RangeCheck(actingVersion uint16, schemaVersion 
 			return fmt.Errorf("Range check failed on t.SrcControlStreamId (%v < %v > %v)", t.SrcControlStreamIdMinValue(), t.SrcControlStreamId, t.SrcControlStreamIdMaxValue())
 		}
 	}
+	for idx, ch := range t.SrcControlChannel {
+		if ch > 127 {
+			return fmt.Errorf("t.SrcControlChannel[%d]=%d failed ASCII validation", idx, ch)
+		}
+	}
+	for idx, ch := range t.LiveDestination {
+		if ch > 127 {
+			return fmt.Errorf("t.LiveDestination[%d]=%d failed ASCII validation", idx, ch)
+		}
+	}
 	return nil
 }
 
@@ -208,11 +218,15 @@ func (*TaggedReplicateRequest) SbeSchemaId() (schemaId uint16) {
 }
 
 func (*TaggedReplicateRequest) SbeSchemaVersion() (schemaVersion uint16) {
-	return 6
+	return 9
 }
 
 func (*TaggedReplicateRequest) SbeSemanticType() (semanticType []byte) {
 	return []byte("")
+}
+
+func (*TaggedReplicateRequest) SbeSemanticVersion() (semanticVersion string) {
+	return "5.2"
 }
 
 func (*TaggedReplicateRequest) ControlSessionIdId() uint16 {

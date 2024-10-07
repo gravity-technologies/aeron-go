@@ -23,12 +23,17 @@ import (
 
 type Idler interface {
 	Idle(fragmentsRead int)
+	Reset()
 }
 
 type Busy struct {
 }
 
 func (s Busy) Idle(fragmentsRead int) {
+
+}
+
+func (s Busy) Reset() {
 
 }
 
@@ -42,6 +47,9 @@ func (s Sleeping) Idle(fragmentsRead int) {
 	}
 }
 
+func (s Sleeping) Reset() {
+}
+
 type Yielding struct {
 }
 
@@ -49,4 +57,7 @@ func (s Yielding) Idle(fragmentsRead int) {
 	if fragmentsRead == 0 {
 		runtime.Gosched()
 	}
+}
+
+func (s Yielding) Reset() {
 }

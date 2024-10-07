@@ -102,11 +102,15 @@ func (*PurgeRecordingRequest) SbeSchemaId() (schemaId uint16) {
 }
 
 func (*PurgeRecordingRequest) SbeSchemaVersion() (schemaVersion uint16) {
-	return 6
+	return 9
 }
 
 func (*PurgeRecordingRequest) SbeSemanticType() (semanticType []byte) {
 	return []byte("")
+}
+
+func (*PurgeRecordingRequest) SbeSemanticVersion() (semanticVersion string) {
+	return "5.2"
 }
 
 func (*PurgeRecordingRequest) ControlSessionIdId() uint16 {

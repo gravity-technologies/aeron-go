@@ -102,11 +102,15 @@ func (*RecordingProgress) SbeSchemaId() (schemaId uint16) {
 }
 
 func (*RecordingProgress) SbeSchemaVersion() (schemaVersion uint16) {
-	return 6
+	return 9
 }
 
 func (*RecordingProgress) SbeSemanticType() (semanticType []byte) {
 	return []byte("")
+}
+
+func (*RecordingProgress) SbeSemanticVersion() (semanticVersion string) {
+	return "5.2"
 }
 
 func (*RecordingProgress) RecordingIdId() uint16 {

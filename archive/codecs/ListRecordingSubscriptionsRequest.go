@@ -147,6 +147,11 @@ func (l *ListRecordingSubscriptionsRequest) RangeCheck(actingVersion uint16, sch
 			return fmt.Errorf("Range check failed on l.StreamId (%v < %v > %v)", l.StreamIdMinValue(), l.StreamId, l.StreamIdMaxValue())
 		}
 	}
+	for idx, ch := range l.Channel {
+		if ch > 127 {
+			return fmt.Errorf("l.Channel[%d]=%d failed ASCII validation", idx, ch)
+		}
+	}
 	return nil
 }
 
@@ -167,11 +172,15 @@ func (*ListRecordingSubscriptionsRequest) SbeSchemaId() (schemaId uint16) {
 }
 
 func (*ListRecordingSubscriptionsRequest) SbeSchemaVersion() (schemaVersion uint16) {
-	return 6
+	return 9
 }
 
 func (*ListRecordingSubscriptionsRequest) SbeSemanticType() (semanticType []byte) {
 	return []byte("")
+}
+
+func (*ListRecordingSubscriptionsRequest) SbeSemanticVersion() (semanticVersion string) {
+	return "5.2"
 }
 
 func (*ListRecordingSubscriptionsRequest) ControlSessionIdId() uint16 {

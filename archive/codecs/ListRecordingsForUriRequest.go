@@ -135,6 +135,11 @@ func (l *ListRecordingsForUriRequest) RangeCheck(actingVersion uint16, schemaVer
 			return fmt.Errorf("Range check failed on l.StreamId (%v < %v > %v)", l.StreamIdMinValue(), l.StreamId, l.StreamIdMaxValue())
 		}
 	}
+	for idx, ch := range l.Channel {
+		if ch > 127 {
+			return fmt.Errorf("l.Channel[%d]=%d failed ASCII validation", idx, ch)
+		}
+	}
 	return nil
 }
 
@@ -155,11 +160,15 @@ func (*ListRecordingsForUriRequest) SbeSchemaId() (schemaId uint16) {
 }
 
 func (*ListRecordingsForUriRequest) SbeSchemaVersion() (schemaVersion uint16) {
-	return 6
+	return 9
 }
 
 func (*ListRecordingsForUriRequest) SbeSemanticType() (semanticType []byte) {
 	return []byte("")
+}
+
+func (*ListRecordingsForUriRequest) SbeSemanticVersion() (semanticVersion string) {
+	return "5.2"
 }
 
 func (*ListRecordingsForUriRequest) ControlSessionIdId() uint16 {

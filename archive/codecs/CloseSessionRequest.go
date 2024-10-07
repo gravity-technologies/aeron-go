@@ -70,11 +70,15 @@ func (*CloseSessionRequest) SbeSchemaId() (schemaId uint16) {
 }
 
 func (*CloseSessionRequest) SbeSchemaVersion() (schemaVersion uint16) {
-	return 6
+	return 9
 }
 
 func (*CloseSessionRequest) SbeSemanticType() (semanticType []byte) {
 	return []byte("")
+}
+
+func (*CloseSessionRequest) SbeSemanticVersion() (semanticVersion string) {
+	return "5.2"
 }
 
 func (*CloseSessionRequest) ControlSessionIdId() uint16 {

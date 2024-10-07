@@ -102,11 +102,15 @@ func (*StartPositionRequest) SbeSchemaId() (schemaId uint16) {
 }
 
 func (*StartPositionRequest) SbeSchemaVersion() (schemaVersion uint16) {
-	return 6
+	return 9
 }
 
 func (*StartPositionRequest) SbeSemanticType() (semanticType []byte) {
 	return []byte("")
+}
+
+func (*StartPositionRequest) SbeSemanticVersion() (semanticVersion string) {
+	return "5.2"
 }
 
 func (*StartPositionRequest) ControlSessionIdId() uint16 {

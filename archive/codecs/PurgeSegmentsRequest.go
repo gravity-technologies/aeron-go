@@ -118,11 +118,15 @@ func (*PurgeSegmentsRequest) SbeSchemaId() (schemaId uint16) {
 }
 
 func (*PurgeSegmentsRequest) SbeSchemaVersion() (schemaVersion uint16) {
-	return 6
+	return 9
 }
 
 func (*PurgeSegmentsRequest) SbeSemanticType() (semanticType []byte) {
 	return []byte("")
+}
+
+func (*PurgeSegmentsRequest) SbeSemanticVersion() (semanticVersion string) {
+	return "5.2"
 }
 
 func (*PurgeSegmentsRequest) ControlSessionIdId() uint16 {

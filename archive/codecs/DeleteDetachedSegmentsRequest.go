@@ -102,11 +102,15 @@ func (*DeleteDetachedSegmentsRequest) SbeSchemaId() (schemaId uint16) {
 }
 
 func (*DeleteDetachedSegmentsRequest) SbeSchemaVersion() (schemaVersion uint16) {
-	return 6
+	return 9
 }
 
 func (*DeleteDetachedSegmentsRequest) SbeSemanticType() (semanticType []byte) {
 	return []byte("")
+}
+
+func (*DeleteDetachedSegmentsRequest) SbeSemanticVersion() (semanticVersion string) {
+	return "5.2"
 }
 
 func (*DeleteDetachedSegmentsRequest) ControlSessionIdId() uint16 {

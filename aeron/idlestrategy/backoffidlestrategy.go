@@ -67,6 +67,10 @@ func (s *BackoffIdleStrategy) Idle(workCount int) {
 	}
 }
 
+func (s *BackoffIdleStrategy) Reset() {
+	s.reset()
+}
+
 func (s *BackoffIdleStrategy) String() string {
 	return fmt.Sprintf("BackoffIdleStrategy(MaxSpins:%d, MaxYields:%d, MinParkPeriodNs:%d, MaxParkPeriodNs:%d)",
 		s.maxSpins, s.maxYields, s.minParkPeriodNs, s.maxParkPeriodNs)

@@ -102,11 +102,15 @@ func (*StopAllReplaysRequest) SbeSchemaId() (schemaId uint16) {
 }
 
 func (*StopAllReplaysRequest) SbeSchemaVersion() (schemaVersion uint16) {
-	return 6
+	return 9
 }
 
 func (*StopAllReplaysRequest) SbeSemanticType() (semanticType []byte) {
 	return []byte("")
+}
+
+func (*StopAllReplaysRequest) SbeSemanticVersion() (semanticVersion string) {
+	return "5.2"
 }
 
 func (*StopAllReplaysRequest) ControlSessionIdId() uint16 {

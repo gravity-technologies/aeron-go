@@ -290,7 +290,11 @@ func (agent *ClusteredServiceAgent) awaitRecoveryCounter() (int32, int64) {
 }
 
 func (agent *ClusteredServiceAgent) loadSnapshot(recordingId int64) error {
-	arch, err := archive.NewArchive(agent.opts.ArchiveOptions, agent.aeronCtx)
+	archiveCtx, err := archive.NewArchiveContext(agent.opts.ArchiveOptions, agent.aeronCtx)
+	if err != nil {
+		return err
+	}
+	arch, err := archive.Connect(archiveCtx)
 	if err != nil {
 		return err
 	}
@@ -767,7 +771,11 @@ func (agent *ClusteredServiceAgent) onMembershipChange(
 }
 
 func (agent *ClusteredServiceAgent) takeSnapshot(logPos int64, leadershipTermId int64) (int64, error) {
-	arch, err := archive.NewArchive(agent.opts.ArchiveOptions, agent.aeronCtx)
+	archiveCtx, err := archive.NewArchiveContext(agent.opts.ArchiveOptions, agent.aeronCtx)
+	if err != nil {
+		return NullValue, err
+	}
+	arch, err := archive.Connect(archiveCtx)
 	if err != nil {
 		return NullValue, err
 	}
@@ -974,6 +982,10 @@ func (agent *ClusteredServiceAgent) TimeUnit() codecs.ClusterTimeUnitEnum {
 
 func (agent *ClusteredServiceAgent) IdleStrategy() idlestrategy.Idler {
 	return agent
+}
+
+func (agent *ClusteredServiceAgent) Reset() {
+	agent.opts.IdleStrategy.Reset()
 }
 
 func (agent *ClusteredServiceAgent) ScheduleTimer(correlationId int64, deadline int64) bool {

@@ -16,8 +16,9 @@
 package aeron
 
 import (
-	"github.com/lirm/aeron-go/aeron/atomic"
 	"time"
+
+	"github.com/lirm/aeron-go/aeron/atomic"
 
 	"github.com/lirm/aeron-go/aeron/broadcast"
 	"github.com/lirm/aeron-go/aeron/counters"
