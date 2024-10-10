@@ -310,6 +310,7 @@ func (agent *ClusteredServiceAgent) awaitRecoveryCounter() (int32, int64) {
 func (agent *ClusteredServiceAgent) loadSnapshot(recordingId int64) error {
 	archiveCtx, err := archive.NewArchiveContext(agent.opts.ArchiveOptions, agent.aeronCtx)
 	if err != nil {
+		archiveCtx.Close()
 		return err
 	}
 	arch, err := archive.Connect(archiveCtx)
@@ -842,6 +843,7 @@ func (agent *ClusteredServiceAgent) onTimerEvent(
 func (agent *ClusteredServiceAgent) takeSnapshot(logPos int64, leadershipTermId int64) (int64, error) {
 	archiveCtx, err := archive.NewArchiveContext(agent.opts.ArchiveOptions, agent.aeronCtx)
 	if err != nil {
+		archiveCtx.Close()
 		return NullValue, err
 	}
 	arch, err := archive.Connect(archiveCtx)

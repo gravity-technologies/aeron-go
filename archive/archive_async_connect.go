@@ -269,3 +269,17 @@ func (ac *AsyncConnect) checkDeadline() error {
 	}
 	return nil
 }
+
+func (ac *AsyncConnect) Close() {
+	if State.DONE != ac.State {
+		if ac.controlResponsePoller != nil && ac.controlResponsePoller.Subscription != nil {
+			ac.controlResponsePoller.Subscription.Close()
+		}
+		if ac.archiveProxy != nil && ac.archiveProxy.Publication != nil {
+			ac.archiveProxy.Publication.Close()
+		} else if aeron.NullValue != ac.publicationRegistrationId {
+			ac.Ctx.Aeron.AsyncRemovePublication(ac.publicationRegistrationId)
+		}
+		ac.Ctx.Close()
+	}
+}
