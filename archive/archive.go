@@ -267,6 +267,7 @@ func NewArchive(archiveContext *ArchiveContext, controlResponsePoller *ControlRe
 func Connect(ctx *ArchiveContext) (aeronArchive *Archive, err error) {
 	asyncConnect, err := NewAsyncConnect(ctx)
 	if err != nil {
+		asyncConnect.Close()
 		return nil, err
 	}
 
@@ -275,6 +276,7 @@ func Connect(ctx *ArchiveContext) (aeronArchive *Archive, err error) {
 	for aeronArchive == nil {
 		aeronArchive, err = asyncConnect.Poll()
 		if err != nil {
+			asyncConnect.Close()
 			return nil, err
 		}
 

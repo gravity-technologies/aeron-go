@@ -1,6 +1,7 @@
 package archive
 
 import (
+	"sync"
 	"time"
 
 	"github.com/lirm/aeron-go/aeron"
@@ -24,6 +25,7 @@ type ArchiveContext struct {
 	ControlTermBufferSparse bool
 	IdleStrategy            idlestrategy.Idler
 	Aeron                   *aeron.Aeron
+	Lock                    sync.Mutex
 	ErrorHandler            func(error)
 	recordingSignalConsumer func(*codecs.RecordingSignalEvent)
 	// TODO: refactor
@@ -70,6 +72,7 @@ func NewArchiveContext(options *Options, aeronCtx *aeron.Context) (*ArchiveConte
 
 	aeronClient, err := aeron.Connect(aeronCtx)
 	if err != nil {
+		logger.Errorf("archive_context :: unable to connect to aeron : %s", err)
 		return nil, err
 	}
 
@@ -83,12 +86,12 @@ func NewArchiveContext(options *Options, aeronCtx *aeron.Context) (*ArchiveConte
 		ControlResponseStreamId: options.ResponseStream,
 		IdleStrategy:            options.IdleStrategy,
 		Aeron:                   aeronClient,
+		Lock:                    sync.Mutex{},
 		ErrorHandler:            LoggingErrorListener,
 		recordingSignalConsumer: LoggingRecordingSignalListener,
 		// ControlTermBufferSparse: true,
 		// ControlTermBufferLength: 64 * 1024,
 		// ControlMtuLength: 8192,
-		// Lock:         &sync.Mutex{},
 		// AeronDirectoryName: ""
 		// CredentialsSupplier: nil
 		ArchiveOptions: options,
@@ -96,4 +99,12 @@ func NewArchiveContext(options *Options, aeronCtx *aeron.Context) (*ArchiveConte
 	}
 
 	return ctx, nil
+}
+
+func (ac *ArchiveContext) Close() {
+	if ac.Aeron != nil {
+		if err := ac.Aeron.Close(); err != nil {
+			logger.Errorf("archive_context :: failed to close aeron : %s", err)
+		}
+	}
 }

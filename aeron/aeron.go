@@ -312,6 +312,11 @@ func (aeron *Aeron) AddExclusivePublicationDeprecated(channel string, streamID i
 	return ch
 }
 
+// AsyncRemovePublication
+func (aeron *Aeron) AsyncRemovePublication(registrationID int64) error {
+	return aeron.conductor.releasePublication(registrationID)
+}
+
 // AsyncAddExclusivePublication will add a new exclusive publication to the driver and return its registration ID.  That
 // ID can be used to get the added exclusive Publication with GetExclusivePublication().
 func (aeron *Aeron) AsyncAddExclusivePublication(channel string, streamID int32) (int64, error) {
