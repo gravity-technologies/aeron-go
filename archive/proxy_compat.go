@@ -14,6 +14,7 @@ import (
 const PROXY_DEFAULT_RETRY_ATTEMPTS = 3
 
 // Offer to our request publication with a retry to allow time for the image establishment, some back pressure etc
+// https://github.com/real-logic/aeron/blob/release/1.46.x/aeron-archive/src/main/java/io/aeron/archive/client/ArchiveProxy.java#L1478
 func (proxy *Proxy) OfferV1(buffer *atomic.Buffer, offset int32, length int32, reservedValueSupplier term.ReservedValueSupplier) (bool, error) {
 
 	proxy.retryIdleStrategy.Reset()
@@ -93,7 +94,8 @@ func (proxy *Proxy) ArchiveId(correlationId, controlSessionId int64) (bool, erro
 	return proxy.OfferV1(atomic.MakeBuffer(bytes, len(bytes)), 0, int32(len(bytes)), nil)
 }
 
-// TryChallengeResponse ...
+// TryChallengeResponse Try and send a ChallengeResponse to an archive on its control interface providing the credentials. Only one attempt will be made to offer the request.
+// https://github.com/real-logic/aeron/blob/release/1.46.x/aeron-archive/src/main/java/io/aeron/archive/client/ArchiveProxy.java#L260
 func (proxy *Proxy) TryChallengeResponse(encodedCredentials []uint8, correlationId, controlSessionId int64) (bool, error) {
 	// Create a packet and send it
 	bytes, err := codecs.ChallengeResponsePacket(proxy.marshaller, proxy.rangeChecking, controlSessionId, correlationId, encodedCredentials)
@@ -109,7 +111,8 @@ func (proxy *Proxy) TryChallengeResponse(encodedCredentials []uint8, correlation
 	return ret > 0, nil
 }
 
-// TryConnect ...
+// TryConnect Try and connect to an archive on its control interface providing the response stream details. Only one attempt will be made to offer the request.
+// https://github.com/real-logic/aeron/blob/release/1.46.x/aeron-archive/src/main/java/io/aeron/archive/client/ArchiveProxy.java#L170
 func (proxy *Proxy) TryConnect(responseChannel string, responseStreamId int32, correlationID int64) (bool, error) {
 
 	// Create a packet and send it

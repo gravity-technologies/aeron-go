@@ -71,6 +71,7 @@ func (proxy *Proxy) Offer(buffer *atomic.Buffer, offset int32, length int32, res
 // publication. Responses will be processed on the control
 
 // ConnectRequest packet and offer
+// https://github.com/real-logic/aeron/blob/release/1.46.x/aeron-archive/src/main/java/io/aeron/archive/client/ArchiveProxy.java#L145
 func (proxy *Proxy) ConnectRequest(correlationID int64, responseStream int32, responseChannel string) (bool, error) {
 
 	// Create a packet and send it
@@ -529,6 +530,7 @@ func (proxy *Proxy) MigrateSegmentsRequest(correlationID int64, srcRecordingID i
 }
 
 // AuthConnectRequest packet and offer
+// https://github.com/real-logic/aeron/blob/release/1.46.x/aeron-archive/src/main/java/io/aeron/archive/client/ArchiveProxy.java#L145
 func (proxy *Proxy) AuthConnectRequest(correlationID int64, responseStream int32, responseChannel string, encodedCredentials []uint8) (bool, error) {
 
 	// Create a packet and send it
