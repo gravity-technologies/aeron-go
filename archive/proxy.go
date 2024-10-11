@@ -67,28 +67,20 @@ func (proxy *Proxy) Offer(buffer *atomic.Buffer, offset int32, length int32, res
 
 }
 
-// OfferOnce is the real Java Offer
-func (proxy *Proxy) OfferOnce(buffer *atomic.Buffer, offset int32, length int32, reservedValueSupplier term.ReservedValueSupplier) int64 {
-	return proxy.Publication.Offer(buffer, offset, length, reservedValueSupplier)
-}
-
 // From here we have all the functions that create a data packet and send it on the
 // publication. Responses will be processed on the control
 
 // ConnectRequest packet and offer
-func (proxy *Proxy) ConnectRequest(correlationID int64, responseStream int32, responseChannel string) error {
+// https://github.com/real-logic/aeron/blob/release/1.46.x/aeron-archive/src/main/java/io/aeron/archive/client/ArchiveProxy.java#L145
+func (proxy *Proxy) ConnectRequest(correlationID int64, responseStream int32, responseChannel string) (bool, error) {
 
 	// Create a packet and send it
 	bytes, err := codecs.ConnectRequestPacket(proxy.marshaller, proxy.rangeChecking, correlationID, responseStream, responseChannel)
 	if err != nil {
-		return err
+		return false, err
 	}
 
-	if ret := proxy.Offer(atomic.MakeBuffer(bytes, len(bytes)), 0, int32(len(bytes)), nil); ret < 0 {
-		return fmt.Errorf("Offer failed: %d", ret)
-	}
-
-	return nil
+	return proxy.OfferWithTimeout(atomic.MakeBuffer(bytes, len(bytes)), 0, int32(len(bytes)), nil)
 }
 
 // CloseSessionRequest packet and offer
@@ -538,19 +530,16 @@ func (proxy *Proxy) MigrateSegmentsRequest(correlationID int64, srcRecordingID i
 }
 
 // AuthConnectRequest packet and offer
-func (proxy *Proxy) AuthConnectRequest(correlationID int64, responseStream int32, responseChannel string, encodedCredentials []uint8) error {
+// https://github.com/real-logic/aeron/blob/release/1.46.x/aeron-archive/src/main/java/io/aeron/archive/client/ArchiveProxy.java#L145
+func (proxy *Proxy) AuthConnectRequest(correlationID int64, responseStream int32, responseChannel string, encodedCredentials []uint8) (bool, error) {
 
 	// Create a packet and send it
 	bytes, err := codecs.AuthConnectRequestPacket(proxy.marshaller, proxy.rangeChecking, correlationID, responseStream, responseChannel, encodedCredentials)
 	if err != nil {
-		return err
+		return false, err
 	}
 
-	if ret := proxy.Offer(atomic.MakeBuffer(bytes, len(bytes)), 0, int32(len(bytes)), nil); ret < 0 {
-		return fmt.Errorf("Offer failed: %d", ret)
-	}
-
-	return nil
+	return proxy.OfferWithTimeout(atomic.MakeBuffer(bytes, len(bytes)), 0, int32(len(bytes)), nil)
 }
 
 // ChallengeResponse packet and offer
