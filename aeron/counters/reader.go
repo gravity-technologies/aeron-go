@@ -277,12 +277,12 @@ func (reader *Reader) GetCounterOwnerId(counterId int32) int64 {
 }
 
 // GetCounterTypeId returns the type id for a counter.
-func (reader *Reader) GetCounterTypeId(counterId int32) int32 {
-	if counterId < 0 || counterId >= int32(reader.maxCounterID) {
-		return -1
-	}
-	return reader.metaData.GetInt32(counterId*MetadataLength + TypeIdOffset)
-}
+// func (reader *Reader) GetCounterTypeId(counterId int32) int32 {
+// 	if counterId < 0 || counterId >= int32(reader.maxCounterID) {
+// 		return -1
+// 	}
+// 	return reader.metaData.GetInt32(counterId*MetadataLength + TypeIdOffset)
+// }
 
 func (reader *Reader) IsCounterAllocated(counterId int32) bool {
 	return counterId >= 0 && counterId < int32(reader.maxCounterID) &&
