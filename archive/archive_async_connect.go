@@ -255,6 +255,7 @@ func (ac *AsyncConnect) transitionToDone(archiveId int64) (aeronArchive *Archive
 	aeronArchive = NewArchive(ac.Ctx, ac.controlResponsePoller, ac.archiveProxy, ac.ControlSessionId, archiveId)
 
 	ac.State = State.DONE
+	logger.Debugf("Archive ID: %d", archiveId)
 	logger.Debugf("Archive Connection State transition to: DONE")
 	return
 }

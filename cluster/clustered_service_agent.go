@@ -377,6 +377,25 @@ func (agent *ClusteredServiceAgent) addSessionFromSnapshot(session *containerCli
 	agent.sessions[session.id] = session
 }
 
+func (agent *ClusteredServiceAgent) awaitRecordingCounter(sessionId int32, arch *archive.Archive) (counterId int32, err error) {
+	agent.IdleStrategy().Reset()
+	archiveId := arch.ArchiveId
+	counterId = agent.counters.FindCounterIdBySession(sessionId, archiveId)
+	for counters.NullCounterId == counterId {
+		agent.Idle(0)
+		err = agent.errorDuringExecution
+		if err != nil {
+			return counters.NullCounterId, err
+		}
+		if _, err = arch.Control.PollForErrorResponse(); err != nil {
+			return counters.NullCounterId, err
+		}
+		counterId = agent.counters.FindCounterIdBySession(sessionId, archiveId)
+	}
+
+	return
+}
+
 func (agent *ClusteredServiceAgent) checkForClockTick() (bool, error) {
 	if agent.aeronClient.IsClosed() {
 		err := &AgentTerminationError{"unexpected Aeron close"}
@@ -844,39 +863,59 @@ func (agent *ClusteredServiceAgent) takeSnapshot(logPos int64, leadershipTermId 
 	archiveCtx, err := archive.NewArchiveContext(agent.opts.ArchiveOptions, agent.aeronCtx)
 	if err != nil {
 		archiveCtx.Close()
+		logger.Errorf("takeSnapshot :: NewArchiveContext failed : %s", err)
 		return NullValue, err
 	}
 	arch, err := archive.Connect(archiveCtx)
 	if err != nil {
+		logger.Errorf("takeSnapshot :: Archive Connect failed : %s", err)
 		return NullValue, err
 	}
 	defer closeArchive(arch)
 
-	pub, err := arch.AddRecordedPublication(agent.opts.SnapshotChannel, agent.opts.SnapshotStreamId)
+	pub, err := arch.AddExclusivePublication(agent.opts.SnapshotChannel, agent.opts.SnapshotStreamId)
 	if err != nil {
+		logger.Errorf("takeSnapshot :: AddExclusivePublication failed : %s", err)
 		return NullValue, err
 	}
 	defer closePublication(pub)
 
-	recordingId, counterId, err := agent.awaitRecordingCounterAndId(pub.SessionID())
+	channel, err := archive.AddSessionIdToChannel(pub.Channel(), pub.SessionID())
 	if err != nil {
+		logger.Errorf("takeSnapshot :: AddSessionIdToChannel failed : %s", err)
 		return NullValue, err
 	}
 
+	_, err = arch.StartRecording(channel, agent.opts.SnapshotStreamId, true, true)
+	if err != nil {
+		logger.Errorf("takeSnapshot :: Archive Start Recording failed : %s", err)
+		return NullValue, err
+	}
+
+	counterId, err := agent.awaitRecordingCounter(pub.SessionID(), arch)
+	if err != nil {
+		logger.Errorf("takeSnapshot :: awaitRecordingCounter failed : %s", err)
+		return NullValue, err
+	}
+	recordingId := agent.counters.GetRecordingId(counterId)
 	logger.Debugf("takeSnapshot - got recordingId: %d", recordingId)
 	snapshotTaker := newSnapshotTaker(agent.opts, pub)
 	if err := snapshotTaker.markBegin(logPos, leadershipTermId, agent.timeUnit, agent.opts.AppVersion); err != nil {
+		logger.Errorf("takeSnapshot :: markBegin failed : %s", err)
 		return NullValue, err
 	}
 	for _, session := range agent.sessions {
 		if err := snapshotTaker.snapshotSession(session); err != nil {
+			logger.Errorf("takeSnapshot :: snapshotSession failed : %s", err)
 			return NullValue, err
 		}
 	}
 	if err := snapshotTaker.markEnd(logPos, leadershipTermId, agent.timeUnit, agent.opts.AppVersion); err != nil {
+		logger.Errorf("takeSnapshot :: markEnd failed : %s", err)
 		return NullValue, err
 	}
 	if _, err := agent.checkForClockTick(); err != nil {
+		logger.Errorf("takeSnapshot :: checkForClockTick failed : %s", err)
 		return NullValue, err
 
 	}
@@ -888,10 +927,12 @@ func (agent *ClusteredServiceAgent) takeSnapshot(logPos int64, leadershipTermId 
 				agent.terminate()
 			}
 		}
+		logger.Errorf("takeSnapshot :: archive PollForErrorResponse failed : %s", err)
 		return NullValue, err
 	}
 	agent.service.OnTakeSnapshot(pub)
 	if err = agent.awaitRecordingComplete(recordingId, pub.Position(), counterId, arch); err != nil {
+		logger.Errorf("takeSnapshot :: awaitRecordingComplete failed : %s", err)
 		return NullValue, err
 	}
 
