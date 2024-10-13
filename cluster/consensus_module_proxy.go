@@ -5,6 +5,7 @@ import (
 
 	"github.com/lirm/aeron-go/aeron"
 	"github.com/lirm/aeron-go/aeron/atomic"
+	"github.com/lirm/aeron-go/aeron/logbuffer"
 	"github.com/lirm/aeron-go/cluster/codecs"
 )
 
@@ -19,17 +20,21 @@ type consensusModuleProxy struct {
 	rangeChecking bool
 	publication   *aeron.Publication
 	buffer        *atomic.Buffer
+	bufferClaim   logbuffer.Claim
 }
 
 func newConsensusModuleProxy(
 	options *Options,
 	publication *aeron.Publication,
 ) *consensusModuleProxy {
+	var bufferClaim logbuffer.Claim
+	buffer := atomic.MakeBuffer(make([]byte, 500))
 	return &consensusModuleProxy{
 		marshaller:    codecs.NewSbeGoMarshaller(),
 		rangeChecking: options.RangeChecking,
 		publication:   publication,
-		buffer:        atomic.MakeBuffer(make([]byte, 500)),
+		buffer:        buffer,
+		bufferClaim:   bufferClaim,
 	}
 }
 
