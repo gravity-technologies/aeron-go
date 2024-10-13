@@ -37,7 +37,7 @@ func newConsensusModuleProxy(
 // publication. Responses will be processed on the control
 
 // ConnectRequest packet and send
-func (proxy *consensusModuleProxy) ack(
+func (proxy *consensusModuleProxy) ackOffer(
 	logPosition int64,
 	timestamp int64,
 	ackID int64,
@@ -62,7 +62,7 @@ func (proxy *consensusModuleProxy) ack(
 	return proxy.offerAndCheck(buffer, 0, buffer.Capacity())
 }
 
-func (proxy *consensusModuleProxy) closeSessionRequest(
+func (proxy *consensusModuleProxy) closeSessionOffer(
 	clusterSessionId int64,
 ) (bool, error) {
 	// Create a packet and send it
@@ -78,14 +78,14 @@ func (proxy *consensusModuleProxy) closeSessionRequest(
 	return proxy.offerAndCheck(buffer, 0, buffer.Capacity())
 }
 
-func (proxy *consensusModuleProxy) scheduleTimer(correlationId int64, deadline int64) (bool, error) {
+func (proxy *consensusModuleProxy) scheduleTimerOffer(correlationId int64, deadline int64) (bool, error) {
 	buf := proxy.initBuffer(scheduleTimerTemplateId, scheduleTimerBlockLength)
 	buf.PutInt64(SBEHeaderLength, correlationId)
 	buf.PutInt64(SBEHeaderLength+8, deadline)
 	return proxy.offerAndCheck(buf, 0, SBEHeaderLength+scheduleTimerBlockLength)
 }
 
-func (proxy *consensusModuleProxy) cancelTimer(correlationId int64) (bool, error) {
+func (proxy *consensusModuleProxy) cancelTimerOffer(correlationId int64) (bool, error) {
 	buf := proxy.initBuffer(cancelTimerTemplateId, cancelTimerBlockLength)
 	buf.PutInt64(SBEHeaderLength, correlationId)
 	return proxy.offerAndCheck(buf, 0, SBEHeaderLength+cancelTimerBlockLength)
