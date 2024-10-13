@@ -172,18 +172,34 @@ func checkPageSize(pageSize int32) {
 	}
 }
 
+// Reference:
+// https://github.com/real-logic/aeron/blob/master/aeron-client/src/main/java/io/aeron/logbuffer/LogBufferDescriptor.java
+
+// TermID Get the termId from a packed raw tail value.
 func TermID(rawTail int64) int32 {
 	return int32(rawTail >> 32)
 }
 
-func indexByTermCount(termCount int32) int32 {
+// TermOffset Read the termOffset from a packed raw tail value.
+func TermOffset(rawTail int64, termLength int64) int32 {
+	tail := rawTail & 0xFFFFFFFF
+	return int32(min(tail, termLength))
+}
+
+// ComputePosition Compute the current position in absolute number of bytes.
+func ComputePosition(activeTermId int32, termOffset int32, positionBitsToShift int32, initialTermId int32) int64 {
+	termCount := int64(activeTermId - initialTermId) // copes with negative activeTermId on rollover
+	return (termCount << uint32(positionBitsToShift)) + int64(termOffset)
+}
+
+func IndexByTermCount(termCount int32) int32 {
 	return termCount % PartitionCount
 }
 
 func RotateLog(logMetaDataBuffer *LogBufferMetaData, currentTermCount int32, currentTermId int32) {
 	nextTermId := currentTermId + 1
 	nextTermCount := currentTermCount + 1
-	nextIndex := indexByTermCount(nextTermCount)
+	nextIndex := IndexByTermCount(nextTermCount)
 	expectedTermId := nextTermId - PartitionCount
 	newRawTail := int64(nextTermId) * (int64(1) << 32)
 	tail := logMetaDataBuffer.TailCounter[nextIndex]

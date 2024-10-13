@@ -343,6 +343,10 @@ func (appender *Appender) SetTailTermID(termID int32) {
 	appender.tailCounter.Set(int64(termID) << 32)
 }
 
+func (appender *Appender) TermBuffer() *atomic.Buffer {
+	return appender.termBuffer
+}
+
 func minInt32(v1, v2 int32) int32 {
 	if v1 < v2 {
 		return v1
