@@ -1034,7 +1034,7 @@ func (agent *ClusteredServiceAgent) closeClientSession(id int64) bool {
 
 	attempts := 3
 	for attempts > 0 {
-		ok, err := agent.consensusModuleProxy.closeSessionRequest(id)
+		ok, err := agent.consensusModuleProxy.closeSession(id)
 		if err != nil {
 			logger.Errorf("closeClientSession: unable to send closeSessionRequest")
 		}

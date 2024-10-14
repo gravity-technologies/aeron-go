@@ -300,11 +300,14 @@ func (pub *Publication) backPressureStatus(currentPosition int64, messageLength 
 	return NotConnected
 }
 
+// TryClaim seems to be ConcurrentPublication TryClaim implementation
+// We only update partially to match the sematic here instead of rewrite it
+// https://github.com/real-logic/aeron/blob/release/1.46.x/aeron-client/src/main/java/io/aeron/ConcurrentPublication.java#L311
 func (pub *Publication) TryClaim(length int32, bufferClaim *logbuffer.Claim) int64 {
+	pub.checkPayloadLength(length)
 	if pub.IsClosed() {
 		return PublicationClosed
 	}
-	pub.checkForMaxPayloadLength(length)
 
 	limit := pub.pubLimit.get()
 	termCount := pub.metaData.ActiveTermCountOff.Get()
@@ -312,6 +315,12 @@ func (pub *Publication) TryClaim(length int32, bufferClaim *logbuffer.Claim) int
 	termAppender := pub.appenders[termIndex]
 	rawTail := termAppender.RawTail()
 	termOffset := rawTail & 0xFFFFFFFF
+
+	termId := logbuffer.TermID(rawTail)
+	if termCount != (termId - pub.initialTermID) {
+		return AdminAction
+	}
+
 	position := computeTermBeginPosition(logbuffer.TermID(rawTail), pub.positionBitsToShift, pub.initialTermID) + termOffset
 
 	if position < limit {
