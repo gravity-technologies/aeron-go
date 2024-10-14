@@ -6,6 +6,51 @@ import (
 	"github.com/lirm/aeron-go/cluster/codecs"
 )
 
+// CodecIds stores static value from codegened SBE, so weo don't allocating object every time
+type CodecIds struct {
+	MessageHeader struct {
+		EncodedLength int64
+	}
+	ServiceAck struct {
+		BlockLength uint16
+	}
+	SessionMessageHeader struct {
+		BlockLength uint16
+	}
+	CloseSession struct {
+		BlockLength uint16
+	}
+	CancelTimer struct {
+		BlockLength uint16
+	}
+	ScheduleTimer struct {
+		BlockLength uint16
+	}
+	ClusterMembersQuery struct {
+		BlockLength uint16
+	}
+}
+
+var codecIds CodecIds
+
+func init() {
+	codecsMessageHeader := new(codecs.MessageHeader)
+	codecsServiceAck := new(codecs.ServiceAck)
+	codecsSessionMessageHeader := new(codecs.SessionMessageHeader)
+	codecsCloseSession := new(codecs.CloseSession)
+	codecsCancelTimer := new(codecs.CancelTimer)
+	codecsScheduleTimer := new(codecs.ScheduleTimer)
+	codecsClusterMembersQuery := new(codecs.ClusterMembersQuery)
+
+	codecIds.MessageHeader.EncodedLength = codecsMessageHeader.EncodedLength()
+	codecIds.ServiceAck.BlockLength = codecsServiceAck.SbeBlockLength()
+	codecIds.SessionMessageHeader.BlockLength = codecsSessionMessageHeader.SbeBlockLength()
+	codecIds.CloseSession.BlockLength = codecsCloseSession.SbeBlockLength()
+	codecIds.CancelTimer.BlockLength = codecsCancelTimer.SbeBlockLength()
+	codecIds.ScheduleTimer.BlockLength = codecsScheduleTimer.SbeBlockLength()
+	codecIds.ClusterMembersQuery.BlockLength = codecsClusterMembersQuery.SbeBlockLength()
+}
+
 // -----------------------------------------------------------------------------
 // Java compat implementation and using TryClaim for better performance
 // https://github.com/real-logic/aeron/blob/release/1.46.x/aeron-cluster/src/main/java/io/aeron/cluster/service/ConsensusModuleProxy.java
@@ -19,7 +64,7 @@ func (proxy *consensusModuleProxy) ack(
 	relevantID int64,
 	serviceID int32,
 ) (bool, error) {
-	length := int32(new(codecs.MessageHeader).EncodedLength() + int64(new(codecs.ServiceAck).SbeBlockLength()))
+	length := int32(codecIds.MessageHeader.EncodedLength + int64(codecIds.ServiceAck.BlockLength))
 	position := proxy.publication.TryClaim(length, &proxy.bufferClaim)
 	if position > 0 {
 		// Create a packet and send it
@@ -52,7 +97,7 @@ func (proxy *consensusModuleProxy) ack(
 func (proxy *consensusModuleProxy) closeSession(
 	clusterSessionId int64,
 ) (bool, error) {
-	length := int32(new(codecs.MessageHeader).EncodedLength() + int64(new(codecs.CloseSession).SbeBlockLength()))
+	length := int32(codecIds.MessageHeader.EncodedLength + int64(codecIds.CloseSession.BlockLength))
 	position := proxy.publication.TryClaim(length, &proxy.bufferClaim)
 	if position > 0 {
 		bytes, err := codecs.CloseSessionRequestPacket(
@@ -78,7 +123,7 @@ func (proxy *consensusModuleProxy) closeSession(
 }
 
 func (proxy *consensusModuleProxy) scheduleTimer(correlationId int64, deadline int64) (bool, error) {
-	length := int32(new(codecs.MessageHeader).EncodedLength() + int64(new(codecs.ScheduleTimer).SbeBlockLength()))
+	length := int32(codecIds.MessageHeader.EncodedLength + int64(codecIds.ScheduleTimer.BlockLength))
 	position := proxy.publication.TryClaim(length, &proxy.bufferClaim)
 	if position > 0 {
 		bytes, err := codecs.ScheduleTimerEncoder(
@@ -105,7 +150,7 @@ func (proxy *consensusModuleProxy) scheduleTimer(correlationId int64, deadline i
 }
 
 func (proxy *consensusModuleProxy) cancelTimer(correlationId int64) (bool, error) {
-	length := int32(new(codecs.MessageHeader).EncodedLength() + int64(new(codecs.CancelTimer).SbeBlockLength()))
+	length := int32(codecIds.MessageHeader.EncodedLength + int64(codecIds.CancelTimer.BlockLength))
 	position := proxy.publication.TryClaim(length, &proxy.bufferClaim)
 	if position > 0 {
 		bytes, err := codecs.CancelTimerEncoder(
@@ -131,7 +176,7 @@ func (proxy *consensusModuleProxy) cancelTimer(correlationId int64) (bool, error
 }
 
 func (proxy *consensusModuleProxy) clusterMembersQuery(correlationId int64) (bool, error) {
-	length := int32(new(codecs.MessageHeader).EncodedLength() + int64(new(codecs.ClusterMembersQuery).SbeBlockLength()))
+	length := int32(codecIds.MessageHeader.EncodedLength + int64(codecIds.ClusterMembersQuery.BlockLength))
 	position := proxy.publication.TryClaim(length, &proxy.bufferClaim)
 	if position > 0 {
 		bytes, err := codecs.ClusterMembersQueryEncoder(
@@ -157,14 +202,12 @@ func (proxy *consensusModuleProxy) clusterMembersQuery(correlationId int64) (boo
 	return false, nil
 }
 
-// TODO: fix proper constant and namespace
-var SESSION_HEADER_LENGTH = int32(new(codecs.MessageHeader).EncodedLength() + int64(new(codecs.SessionMessageHeader).SbeBlockLength()))
-
 // https://github.com/real-logic/aeron/blob/release/1.46.x/aeron-cluster/src/main/java/io/aeron/cluster/service/ConsensusModuleProxy.java#L131
 func (proxy *consensusModuleProxy) TryClaim(length int32, bufferClaim *logbuffer.Claim, sessionHeader *atomic.Buffer) (int64, error) {
+	sessionHeaderLength := codecIds.MessageHeader.EncodedLength + int64(codecIds.SessionMessageHeader.BlockLength)
 	position := proxy.publication.TryClaim(length, bufferClaim)
 	if position > 0 {
-		bufferClaim.Buffer().PutBytes(int32(logbuffer.DataFrameHeader.Length), sessionHeader, 0, SESSION_HEADER_LENGTH)
+		bufferClaim.Buffer().PutBytes(int32(logbuffer.DataFrameHeader.Length), sessionHeader, 0, int32(sessionHeaderLength))
 	} else {
 		if err := checkResult(position, proxy.publication); err != nil {
 			bufferClaim.Abort()
