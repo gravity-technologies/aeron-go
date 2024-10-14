@@ -82,7 +82,6 @@ type ClusteredServiceAgent struct {
 	sessionMsgHdrBuffer      *atomic.Buffer
 	requestedAckPosition     int64
 	activeLifecycleCallback  LifeCycleCallback
-	signalChan               chan os.Signal
 
 	// errorDuringExecution field now indicates terminal/fatal state
 	errorDuringExecution error
@@ -177,18 +176,31 @@ func NewClusteredServiceAgent(
 }
 
 func (agent *ClusteredServiceAgent) StartAndRunWithGracefulShutdown() error {
-	agent.signalChan = make(chan os.Signal, 1)
-	signal.Notify(agent.signalChan, syscall.SIGINT, syscall.SIGTERM)
+	interruptCh := make(chan os.Signal, 1)
+	signal.Notify(interruptCh, syscall.SIGINT, syscall.SIGTERM)
 	defer agent.OnClose()
 
-	go func() {
-		<-agent.signalChan
-		agent.OnClose()
-	}()
+	errCh := make(chan error)
+	go func(errCh chan error) {
+		errCh <- agent.StartAndRun()
+	}(errCh)
 
-	return agent.StartAndRun()
+	for {
+		select {
+		case err := <-errCh:
+			if err != nil {
+				logger.Errorf("encountered error while running : %s", err)
+				return err
+			}
+			return nil
+		case signal := <-interruptCh:
+			logger.Infof("received interrupt signal [%d]. Graceful shutting down...", signal)
+			return nil
+		}
+	}
 }
 
+// StartAndRun will require to run OnClose() manually for cleaning up resources
 func (agent *ClusteredServiceAgent) StartAndRun() (err error) {
 	if err = agent.OnStart(); err != nil {
 		return
@@ -470,6 +482,7 @@ func (agent *ClusteredServiceAgent) pollServiceAdapter() (workCount int, err err
 
 // We need to call this on end of each StartAndRun() like how java does it with finally
 // Either we defer agent.OnClose() or trap signal and execute it
+// OnClose() currently is NOT SAFE to call twice, but nothing is calling this directly except main thread
 // https://github.com/real-logic/aeron/blob/master/aeron-samples/src/main/java/io/aeron/samples/stress/StressMdcClient.java#L292
 func (agent *ClusteredServiceAgent) OnClose() {
 	if agent.isServiceActive {
