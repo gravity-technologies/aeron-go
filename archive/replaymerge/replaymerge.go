@@ -333,19 +333,20 @@ func (rm *ReplayMerge) getRecordingPosition(nowMs int64) (workCount int, err err
 func (rm *ReplayMerge) replay(nowMs int64) (workCount int, err error) {
 	if aeron.NullValue == rm.activeCorrelationId {
 		correlationId := rm.archive.Aeron().NextCorrelationID()
-		if rm.archive.Proxy.ReplayRequest(
+		ok, err := rm.archive.Proxy.Replay(
 			correlationId,
 			rm.recordingId,
 			rm.startPosition,
 			archive.RecordingLengthMax,
 			rm.replayChannelUri.String(),
 			rm.subscription.StreamID(),
-			rm.archive.SessionID) == nil {
+			rm.archive.SessionID)
+		if err == nil && ok {
 			rm.activeCorrelationId = correlationId
 			rm.timeOfLastProgressMs = nowMs
 			workCount += 1
 		}
-		return
+		return workCount, err
 	}
 
 	var success bool
@@ -448,7 +449,8 @@ func (rm *ReplayMerge) attemptLiveJoin(nowMs int64) (workCount int, err error) {
 
 func (rm *ReplayMerge) stopReplay() {
 	correlationId := rm.archive.Aeron().NextCorrelationID()
-	if rm.archive.Proxy.StopReplayRequest(correlationId, rm.replaySessionId, rm.archive.SessionID) == nil {
+	ok, err := rm.archive.Proxy.StopReplay(correlationId, rm.replaySessionId, rm.archive.SessionID)
+	if err == nil && ok {
 		rm.isReplayActive = false
 	}
 }

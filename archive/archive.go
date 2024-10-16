@@ -42,6 +42,8 @@ type Archive struct {
 
 	ArchiveContext *ArchiveContext
 	ArchiveId      int64
+	isClosed       bool
+	isInCallback   bool
 	// ControlSessionId == SessionID
 	// ArchiveProxy == Proxy
 
@@ -263,42 +265,15 @@ func NewArchive(archiveContext *ArchiveContext, controlResponsePoller *ControlRe
 	return
 }
 
-// Connect to an Aeron archive by providing a ArchiveContext. This will create a control session.
-func Connect(ctx *ArchiveContext) (aeronArchive *Archive, err error) {
-	asyncConnect, err := NewAsyncConnect(ctx)
-	if err != nil {
-		asyncConnect.Close()
-		return nil, err
-	}
-
-	previousStep := asyncConnect.State
-
-	for aeronArchive == nil {
-		aeronArchive, err = asyncConnect.Poll()
-		if err != nil {
-			asyncConnect.Close()
-			return nil, err
-		}
-
-		if asyncConnect.State == previousStep {
-			asyncConnect.Ctx.IdleStrategy.Idle(0)
-		} else {
-			logger.Infof("archive asyncConnect state transition: %d -> %d", previousStep, asyncConnect.State)
-			asyncConnect.Ctx.IdleStrategy.Reset()
-			previousStep = asyncConnect.State
-		}
-	}
-
-	return
-}
-
 // Close will terminate client conductor and remove all publications and subscriptions from the media driver
 func (archive *Archive) Close() error {
 	archive.mtx.Lock()
 	defer archive.mtx.Unlock()
 
 	if archive.Proxy.Publication != nil {
-		archive.Proxy.CloseSessionRequest(archive.SessionID)
+		if archive.Proxy.Publication.IsConnected() {
+			archive.Proxy.CloseSession(archive.SessionID)
+		}
 		archive.Proxy.Publication.Close()
 	}
 
@@ -442,7 +417,7 @@ func (archive *Archive) ClientId() int64 {
 //
 // Returns (subscriptionId, nil) or (0, error) on failure.  The
 // SubscriptionId can be used in StopRecordingBySubscription()
-func (archive *Archive) StartRecording(channel string, stream int32, isLocal bool, autoStop bool) (int64, error) {
+func (archive *Archive) StartRecordingV0(channel string, stream int32, isLocal bool, autoStop bool) (int64, error) {
 	correlationID := archive.ArchiveContext.Aeron.NextCorrelationID()
 	logger.Debugf("StartRecording(%s:%d), correlationID:%d", channel, stream, correlationID)
 	correlations.Store(correlationID, archive.Control) // For subsequent lookup in the fragment assemblers
@@ -464,7 +439,7 @@ func (archive *Archive) StartRecording(channel string, stream int32, isLocal boo
 // Channels that include sessionId parameters are considered different than channels without sessionIds. Stopping
 // recording on a channel without a sessionId parameter will not stop the recording of any sessionId specific
 // recordings that use the same channel and streamID.
-func (archive *Archive) StopRecording(channel string, stream int32) error {
+func (archive *Archive) StopRecordingV0(channel string, stream int32) error {
 	correlationID := archive.ArchiveContext.Aeron.NextCorrelationID()
 	logger.Debugf("StopRecording(%s:%d, correlationID:%d)", channel, stream, correlationID)
 	correlations.Store(correlationID, archive.Control) // For subsequent lookup in the fragment assemblers
@@ -512,7 +487,7 @@ func (archive *Archive) StopRecordingByIdentity(recordingID int64) (bool, error)
 // recordings that use the same channel and streamID.
 //
 // Returns error on failure, nil on success
-func (archive *Archive) StopRecordingBySubscriptionId(subscriptionID int64) error {
+func (archive *Archive) StopRecordingBySubscriptionIdV0(subscriptionID int64) error {
 	correlationID := archive.ArchiveContext.Aeron.NextCorrelationID()
 	logger.Debugf("StopRecordingBySubscriptionId(%d), correlationID:%d", subscriptionID, correlationID)
 
@@ -532,7 +507,7 @@ func (archive *Archive) StopRecordingBySubscriptionId(subscriptionID int64) erro
 // recording that pertains to the given Publication
 //
 // Returns error on failure, nil on success
-func (archive *Archive) StopRecordingByPublication(publication aeron.Publication) error {
+func (archive *Archive) StopRecordingByPublicationV0(publication aeron.Publication) error {
 	channel, err := AddSessionIdToChannel(publication.Channel(), publication.SessionID())
 	if err != nil {
 		return err
@@ -545,7 +520,7 @@ func (archive *Archive) StopRecordingByPublication(publication aeron.Publication
 // This creates a per-session recording which can fail if:
 // Sending the request fails - see error for detail
 // Publication.IsOriginal() is false // FIXME: check semantics
-func (archive *Archive) AddRecordedPublication(channel string, stream int32) (*aeron.Publication, error) {
+func (archive *Archive) AddRecordedPublicationV0(channel string, stream int32) (*aeron.Publication, error) {
 	if archive.aeron.IsClosed() {
 		return nil, fmt.Errorf("archive exception - client is closed")
 	}
@@ -587,7 +562,7 @@ func (archive *Archive) AddRecordedPublication(channel string, stream int32) (*a
 }
 
 // ListRecordings up to recordCount recording descriptors
-func (archive *Archive) ListRecordings(fromRecordingID int64, recordCount int32) ([]*codecs.RecordingDescriptor, error) {
+func (archive *Archive) ListRecordingsV0(fromRecordingID int64, recordCount int32) ([]*codecs.RecordingDescriptor, error) {
 	correlationID := archive.ArchiveContext.Aeron.NextCorrelationID()
 	logger.Debugf("ListRecordings(%d, %d), correlationID:%d", fromRecordingID, recordCount, correlationID)
 
@@ -613,7 +588,7 @@ func (archive *Archive) ListRecordings(fromRecordingID int64, recordCount int32)
 //
 // Returns the number of descriptors consumed. If fromRecordingID is
 // greater than the largest known we return 0.
-func (archive *Archive) ListRecordingsForUri(fromRecordingID int64, recordCount int32, channelFragment string, stream int32) ([]*codecs.RecordingDescriptor, error) {
+func (archive *Archive) ListRecordingsForUriV0(fromRecordingID int64, recordCount int32, channelFragment string, stream int32) ([]*codecs.RecordingDescriptor, error) {
 	correlationID := archive.ArchiveContext.Aeron.NextCorrelationID()
 	logger.Debugf("ListRecordingsForUri(%d, %d, %s, %d), correlationID:%d", fromRecordingID, recordCount, channelFragment, stream, correlationID)
 	correlations.Store(correlationID, archive.Control) // For subsequent lookup in the fragment assemblers
@@ -636,7 +611,7 @@ func (archive *Archive) ListRecordingsForUri(fromRecordingID int64, recordCount 
 // ListRecording will fetch the recording descriptor for a recordingID
 //
 // Returns a single recording descriptor or nil if there was no match
-func (archive *Archive) ListRecording(recordingID int64) (*codecs.RecordingDescriptor, error) {
+func (archive *Archive) ListRecordingV0(recordingID int64) (*codecs.RecordingDescriptor, error) {
 	correlationID := archive.ArchiveContext.Aeron.NextCorrelationID()
 	logger.Debugf("ListRecording(%d), correlationID:%d", recordingID, correlationID)
 	correlations.Store(correlationID, archive.Control) // For subsequent lookup in the fragment assemblers
@@ -677,7 +652,7 @@ func (archive *Archive) ListRecording(recordingID int64) (*codecs.RecordingDescr
 //
 // Returns a ReplaySessionID - the id of the replay session which will be the same as the Image sessionId
 // of the received replay for correlation with the matching channel and stream id in the lower 32 bits
-func (archive *Archive) StartReplay(recordingID int64, position int64, length int64, replayChannel string, replayStream int32) (int64, error) {
+func (archive *Archive) StartReplayV0(recordingID int64, position int64, length int64, replayChannel string, replayStream int32) (int64, error) {
 
 	correlationID := archive.ArchiveContext.Aeron.NextCorrelationID()
 	// logger.Debugf("StartReplay(%d, %d, %d, %s, %d), correlationID:%d", recordingID, position, length, replayChannel, replayStream, correlationID)
@@ -729,7 +704,7 @@ func (archive *Archive) BoundedReplay(recordingID int64, position int64, length 
 // StopReplay for a  session.
 //
 // Returns error on failure, nil on success
-func (archive *Archive) StopReplay(replaySessionID int64) error {
+func (archive *Archive) StopReplayV0(replaySessionID int64) error {
 	correlationID := archive.ArchiveContext.Aeron.NextCorrelationID()
 	logger.Debugf("StopReplay(%d), correlationID:%d", replaySessionID, correlationID)
 	correlations.Store(correlationID, archive.Control) // For subsequent lookup in the fragment assemblers
@@ -748,7 +723,7 @@ func (archive *Archive) StopReplay(replaySessionID int64) error {
 // StopAllReplays for a given recordingID
 //
 // Returns error on failure, nil on success
-func (archive *Archive) StopAllReplays(recordingID int64) error {
+func (archive *Archive) StopAllReplaysV0(recordingID int64) error {
 	correlationID := archive.ArchiveContext.Aeron.NextCorrelationID()
 	logger.Debugf("StopAllReplays(%d), correlationID:%d", recordingID, correlationID)
 	correlations.Store(correlationID, archive.Control) // For subsequent lookup in the fragment assemblers
@@ -769,7 +744,7 @@ func (archive *Archive) StopAllReplays(recordingID int64) error {
 // The channel must be configured for the initial position from which it will be extended.
 //
 // Returns the subscriptionId of the recording that can be passed to StopRecording()
-func (archive *Archive) ExtendRecording(recordingID int64, stream int32, sourceLocation codecs.SourceLocationEnum, autoStop bool, channel string) (int64, error) {
+func (archive *Archive) ExtendRecordingV0(recordingID int64, stream int32, sourceLocation codecs.SourceLocationEnum, autoStop bool, channel string) (int64, error) {
 	correlationID := archive.ArchiveContext.Aeron.NextCorrelationID()
 	logger.Debugf("ExtendRecording(%d, %d, %d, %t, %s), correlationID:%d", recordingID, stream, sourceLocation, autoStop, channel, correlationID)
 	correlations.Store(correlationID, archive.Control) // For subsequent lookup in the fragment assemblers
@@ -813,7 +788,7 @@ func (archive *Archive) GetRecordingPosition(recordingID int64) (int64, error) {
 // completion via the RecordingSignal Delete
 //
 // Returns nil on success, error on failre
-func (archive *Archive) TruncateRecording(recordingID int64, position int64) error {
+func (archive *Archive) TruncateRecordingV0(recordingID int64, position int64) error {
 	correlationID := archive.ArchiveContext.Aeron.NextCorrelationID()
 	logger.Debugf("TruncateRecording(%d %d), correlationID:%d", recordingID, position, correlationID)
 	correlations.Store(correlationID, archive.Control) // For subsequent lookup in the fragment assemblers
@@ -832,7 +807,7 @@ func (archive *Archive) TruncateRecording(recordingID int64, position int64) err
 // GetStartPosition for a recording.
 //
 // Return the start position of the recording or (0, error) on failure
-func (archive *Archive) GetStartPosition(recordingID int64) (int64, error) {
+func (archive *Archive) GetStartPositionV0(recordingID int64) (int64, error) {
 	correlationID := archive.ArchiveContext.Aeron.NextCorrelationID()
 	logger.Debugf("GetStartPosition(%d), correlationID:%d", recordingID, correlationID)
 	correlations.Store(correlationID, archive.Control) // For subsequent lookup in the fragment assemblers
@@ -850,7 +825,7 @@ func (archive *Archive) GetStartPosition(recordingID int64) (int64, error) {
 // GetStopPosition for a recording.
 //
 // Return the stop position, or RecordingPositionNull if still active.
-func (archive *Archive) GetStopPosition(recordingID int64) (int64, error) {
+func (archive *Archive) GetStopPositionV0(recordingID int64) (int64, error) {
 	correlationID := archive.ArchiveContext.Aeron.NextCorrelationID()
 	logger.Debugf("GetStopPosition(%d), correlationID:%d", recordingID, correlationID)
 	correlations.Store(correlationID, archive.Control) // For subsequent lookup in the fragment assemblers
@@ -868,7 +843,7 @@ func (archive *Archive) GetStopPosition(recordingID int64) (int64, error) {
 // FindLastMatchingRecording that matches the given criteria.
 //
 // Returns the RecordingID or RecordingIdNullValue if no match
-func (archive *Archive) FindLastMatchingRecording(minRecordingID int64, sessionID int32, stream int32, channel string) (int64, error) {
+func (archive *Archive) FindLastMatchingRecordingV0(minRecordingID int64, sessionID int32, stream int32, channel string) (int64, error) {
 	correlationID := archive.ArchiveContext.Aeron.NextCorrelationID()
 	logger.Debugf("FindLastMatchingRecording(%d, %d, %d, %s), correlationID:%d", minRecordingID, sessionID, stream, correlationID)
 	correlations.Store(correlationID, archive.Control) // For subsequent lookup in the fragment assemblers
@@ -888,7 +863,7 @@ func (archive *Archive) FindLastMatchingRecording(minRecordingID int64, sessionI
 // ExtendRecording.
 //
 // Returns a (possibly empty) list of RecordingSubscriptionDescriptors
-func (archive *Archive) ListRecordingSubscriptions(pseudoIndex int32, subscriptionCount int32, applyStreamID bool, stream int32, channelFragment string) ([]*codecs.RecordingSubscriptionDescriptor, error) {
+func (archive *Archive) ListRecordingSubscriptionsV0(pseudoIndex int32, subscriptionCount int32, applyStreamID bool, stream int32, channelFragment string) ([]*codecs.RecordingSubscriptionDescriptor, error) {
 	correlationID := archive.ArchiveContext.Aeron.NextCorrelationID()
 	logger.Debugf("ListRecordingSubscriptions(%, %d, %t, %d, %sd), correlationID:%d", pseudoIndex, subscriptionCount, applyStreamID, stream, channelFragment, correlationID)
 	correlations.Store(correlationID, archive.Control) // For subsequent lookup in the fragment assemblers
@@ -916,7 +891,7 @@ func (archive *Archive) ListRecordingSubscriptions(pseudoIndex int32, subscripti
 // or being replayed.
 //
 // Returns error on failure, nil on success
-func (archive *Archive) DetachSegments(recordingID int64, newStartPosition int64) error {
+func (archive *Archive) DetachSegmentsV0(recordingID int64, newStartPosition int64) error {
 	correlationID := archive.ArchiveContext.Aeron.NextCorrelationID()
 	logger.Debugf("DetachSegments(%d, %d), correlationID:%d", recordingID, correlationID)
 	correlations.Store(correlationID, archive.Control) // For subsequent lookup in the fragment assemblers
@@ -935,7 +910,7 @@ func (archive *Archive) DetachSegments(recordingID int64, newStartPosition int64
 // DeleteDetachedSegments which have been previously detached from a recording.
 //
 // Returns the count of deleted segment files.
-func (archive *Archive) DeleteDetachedSegments(recordingID int64) (int64, error) {
+func (archive *Archive) DeleteDetachedSegmentsV0(recordingID int64) (int64, error) {
 	correlationID := archive.ArchiveContext.Aeron.NextCorrelationID()
 	logger.Debugf("DeleteDetachedSegments(%d), correlationID:%d", recordingID, correlationID)
 	correlations.Store(correlationID, archive.Control) // For subsequent lookup in the fragment assemblers
@@ -957,7 +932,7 @@ func (archive *Archive) DeleteDetachedSegments(recordingID int64) (int64, error)
 // which are active for recording or being replayed.
 //
 // Returns the count of deleted segment files.
-func (archive *Archive) PurgeSegments(recordingID int64, newStartPosition int64) (int64, error) {
+func (archive *Archive) PurgeSegmentsV0(recordingID int64, newStartPosition int64) (int64, error) {
 	correlationID := archive.ArchiveContext.Aeron.NextCorrelationID()
 	logger.Debugf("PurgeSegments(%d, %d), correlationID:%d", recordingID, newStartPosition, correlationID)
 	correlations.Store(correlationID, archive.Control) // For subsequent lookup in the fragment assemblers
@@ -978,7 +953,7 @@ func (archive *Archive) PurgeSegments(recordingID int64, newStartPosition int64)
 // the start position of the recording they are being attached to.
 //
 // Returns the count of attached segment files.
-func (archive *Archive) AttachSegments(recordingID int64) (int64, error) {
+func (archive *Archive) AttachSegmentsV0(recordingID int64) (int64, error) {
 	correlationID := archive.ArchiveContext.Aeron.NextCorrelationID()
 	logger.Debugf("AttachSegments(%d), correlationID:%d", recordingID, correlationID)
 	correlations.Store(correlationID, archive.Control) // For subsequent lookup in the fragment assemblers
@@ -1006,7 +981,7 @@ func (archive *Archive) AttachSegments(recordingID int64) (int64, error) {
 // segment files.
 //
 // Returns the count of attached segment files.
-func (archive *Archive) MigrateSegments(recordingID int64, position int64) (int64, error) {
+func (archive *Archive) MigrateSegmentsV0(recordingID int64, position int64) (int64, error) {
 	correlationID := archive.ArchiveContext.Aeron.NextCorrelationID()
 	logger.Debugf("MigrateSegments(%d, %d), correlationID:%d", recordingID, position, correlationID)
 	correlations.Store(correlationID, archive.Control) // For subsequent lookup in the fragment assemblers
@@ -1052,7 +1027,7 @@ func (archive *Archive) KeepAlive() error {
 // liveDestination    destination for the live stream if merge is required. nil for no merge.
 //
 // Returns the replication session id which can be passed StopReplication()
-func (archive *Archive) Replicate(srcRecordingID int64, dstRecordingID int64, srcControlStreamID int32, srcControlChannel string, liveDestination string) (int64, error) {
+func (archive *Archive) ReplicateV0(srcRecordingID int64, dstRecordingID int64, srcControlStreamID int32, srcControlChannel string, liveDestination string) (int64, error) {
 	correlationID := archive.ArchiveContext.Aeron.NextCorrelationID()
 	logger.Debugf("Replicate(%d, %d, %d, %s, %s), correlationID:%d", srcRecordingID, dstRecordingID, srcControlStreamID, srcControlChannel, liveDestination, correlationID)
 	correlations.Store(correlationID, archive.Control) // For subsequent lookup in the fragment assemblers
@@ -1090,7 +1065,7 @@ func (archive *Archive) Replicate(srcRecordingID int64, dstRecordingID int64, sr
 // replicationChannel channel over which the replication will occur. Empty or null for default channel.
 //
 // Returns the replication session id which can be passed StopReplication()
-func (archive *Archive) Replicate2(srcRecordingID int64, dstRecordingID int64, stopPosition int64, channelTagID int64, srcControlStreamID int32, srcControlChannel string, liveDestination string, replicationChannel string) (int64, error) {
+func (archive *Archive) Replicate2V0(srcRecordingID int64, dstRecordingID int64, stopPosition int64, channelTagID int64, srcControlStreamID int32, srcControlChannel string, liveDestination string, replicationChannel string) (int64, error) {
 	correlationID := archive.ArchiveContext.Aeron.NextCorrelationID()
 	logger.Debugf("Replicate2(%d, %d, %d, %d, %d, %s, %s, %s), correlationID:%d", srcRecordingID, dstRecordingID, stopPosition, channelTagID, srcControlStreamID, srcControlChannel, liveDestination, replicationChannel, correlationID)
 	correlations.Store(correlationID, archive.Control) // For subsequent lookup in the fragment assemblers
@@ -1129,7 +1104,7 @@ func (archive *Archive) Replicate2(srcRecordingID int64, dstRecordingID int64, s
 // liveDestination    destination for the live stream if merge is required. nil for no merge.
 //
 // Returns the replication session id which can be passed StopReplication()
-func (archive *Archive) TaggedReplicate(srcRecordingID int64, dstRecordingID int64, channelTagID int64, subscriptionTagID int64, srcControlStreamID int32, srcControlChannel string, liveDestination string) (int64, error) {
+func (archive *Archive) TaggedReplicateV0(srcRecordingID int64, dstRecordingID int64, channelTagID int64, subscriptionTagID int64, srcControlStreamID int32, srcControlChannel string, liveDestination string) (int64, error) {
 	correlationID := archive.ArchiveContext.Aeron.NextCorrelationID()
 	logger.Debugf("TaggedReplicate(%d, %d, %d, %d, %d, %s, %s), correlationID:%d", srcRecordingID, dstRecordingID, channelTagID, subscriptionTagID, srcControlStreamID, srcControlChannel, liveDestination, correlationID)
 	correlations.Store(correlationID, archive.Control) // For subsequent lookup in the fragment assemblers
@@ -1147,7 +1122,7 @@ func (archive *Archive) TaggedReplicate(srcRecordingID int64, dstRecordingID int
 // StopReplication of a replication request
 //
 // Returns error on failure, nil on success
-func (archive *Archive) StopReplication(replicationID int64) error {
+func (archive *Archive) StopReplicationV0(replicationID int64) error {
 	correlationID := archive.ArchiveContext.Aeron.NextCorrelationID()
 	logger.Debugf("StopReplication(%d), correlationID:%d", replicationID, correlationID)
 	correlations.Store(correlationID, archive.Control) // For subsequent lookup in the fragment assemblers
@@ -1168,7 +1143,7 @@ func (archive *Archive) StopReplication(replicationID int64) error {
 // the Catalog will be reclaimed upon compaction.
 //
 // Returns error on failure, nil on success
-func (archive *Archive) PurgeRecording(recordingID int64) error {
+func (archive *Archive) PurgeRecordingV0(recordingID int64) error {
 	correlationID := archive.ArchiveContext.Aeron.NextCorrelationID()
 	logger.Debugf("PurgeRecording(%d), correlationID:%d", recordingID, correlationID)
 	correlations.Store(correlationID, archive.Control) // For subsequent lookup in the fragment assemblers
