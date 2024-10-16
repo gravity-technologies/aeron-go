@@ -206,7 +206,7 @@ func (ac *AsyncConnect) Poll() (aeronArchive *Archive, err error) {
 		} else {
 			code := ac.controlResponsePoller.Code
 			if codecs.ControlResponseCode.OK != code {
-				if err := ac.archiveProxy.CloseSession(ac.ControlSessionId); err != nil {
+				if _, err := ac.archiveProxy.CloseSession(ac.ControlSessionId); err != nil {
 					return nil, err
 				}
 				if codecs.ControlResponseCode.ERROR == code {
@@ -246,7 +246,7 @@ func (ac *AsyncConnect) transitionToDone(archiveId int64) (aeronArchive *Archive
 		return nil, err
 	}
 	if !alived {
-		if err = ac.archiveProxy.CloseSession(ac.ControlSessionId); err != nil {
+		if _, err = ac.archiveProxy.CloseSession(ac.ControlSessionId); err != nil {
 			logger.Debugf("failed to CloseSession ControlSessionId=%d", ac.ControlSessionId)
 		}
 		return nil, NewArchiveError(-1, -1, "failed to send keep alive after archive connect")
