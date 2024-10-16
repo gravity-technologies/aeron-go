@@ -64,7 +64,7 @@ func (archive *Archive) StartRecording(channel string, stream int32, isLocal boo
 		return aeron.NullValue, err
 	}
 
-	return archive.Control.PollForResponse(lastCorrelationID, archive.SessionID)
+	return archive.pollForResponse(lastCorrelationID, archive.SessionID)
 }
 
 // StopRecording can be performed by RecordingID, by SubscriptionId,
@@ -94,7 +94,7 @@ func (archive *Archive) StopRecording(channel string, stream int32) error {
 		return err
 	}
 
-	_, err := archive.Control.PollForResponse(lastCorrelationID, archive.SessionID)
+	_, err := archive.pollForResponse(lastCorrelationID, archive.SessionID)
 	return err
 }
 
@@ -119,7 +119,7 @@ func (archive *Archive) TryStopRecordingByIdentity(recordingID int64) (bool, err
 		return false, err
 	}
 
-	res, err := archive.Control.PollForResponse(lastCorrelationID, archive.SessionID)
+	res, err := archive.pollForResponse(lastCorrelationID, archive.SessionID)
 	if err != nil {
 		logger.Errorf("TryStopRecordingByIdentity :: PollForResponse failed : %s", err)
 		return false, err
@@ -153,7 +153,7 @@ func (archive *Archive) StopRecordingBySubscriptionId(subscriptionID int64) erro
 		return err
 	}
 
-	_, err := archive.Control.PollForResponse(lastCorrelationID, archive.SessionID)
+	_, err := archive.pollForResponse(lastCorrelationID, archive.SessionID)
 	return err
 }
 
@@ -395,7 +395,7 @@ func (archive *Archive) StartReplay(recordingID int64, position int64, length in
 		return aeron.NullValue, err
 	}
 
-	return archive.Control.PollForResponse(lastCorrelationID, archive.SessionID)
+	return archive.pollForResponse(lastCorrelationID, archive.SessionID)
 }
 
 // BoundedReplay to start a replay for a length in bytes of a
@@ -435,7 +435,7 @@ func (archive *Archive) StartBoundedReplay(recordingID int64, position int64, le
 		return aeron.NullValue, err
 	}
 
-	return archive.Control.PollForResponse(lastCorrelationID, archive.SessionID)
+	return archive.pollForResponse(lastCorrelationID, archive.SessionID)
 }
 
 // StopReplay for a  session.
@@ -460,7 +460,7 @@ func (archive *Archive) StopReplay(replaySessionID int64) error {
 		return err
 	}
 
-	_, err := archive.Control.PollForResponse(lastCorrelationID, archive.SessionID)
+	_, err := archive.pollForResponse(lastCorrelationID, archive.SessionID)
 	return err
 }
 
@@ -486,7 +486,7 @@ func (archive *Archive) StopAllReplays(recordingID int64) error {
 		return err
 	}
 
-	_, err := archive.Control.PollForResponse(lastCorrelationID, archive.SessionID)
+	_, err := archive.pollForResponse(lastCorrelationID, archive.SessionID)
 	return err
 }
 
@@ -514,7 +514,7 @@ func (archive *Archive) ExtendRecording(recordingID int64, stream int32, sourceL
 		return aeron.NullValue, err
 	}
 
-	return archive.Control.PollForResponse(lastCorrelationID, archive.SessionID)
+	return archive.pollForResponse(lastCorrelationID, archive.SessionID)
 }
 
 // TruncateRecording of a stopped recording to a given position that
@@ -546,7 +546,7 @@ func (archive *Archive) TruncateRecording(recordingID int64, position int64) (in
 		return aeron.NullValue, err
 	}
 
-	return archive.Control.PollForResponse(lastCorrelationID, archive.SessionID)
+	return archive.pollForResponse(lastCorrelationID, archive.SessionID)
 }
 
 // GetStartPosition for a recording.
@@ -571,7 +571,7 @@ func (archive *Archive) GetStartPosition(recordingID int64) (int64, error) {
 		return aeron.NullValue, err
 	}
 
-	return archive.Control.PollForResponse(lastCorrelationID, archive.SessionID)
+	return archive.pollForResponse(lastCorrelationID, archive.SessionID)
 }
 
 // GetStopPosition for a recording.
@@ -596,7 +596,7 @@ func (archive *Archive) GetStopPosition(recordingID int64) (int64, error) {
 		return aeron.NullValue, err
 	}
 
-	return archive.Control.PollForResponse(lastCorrelationID, archive.SessionID)
+	return archive.pollForResponse(lastCorrelationID, archive.SessionID)
 }
 
 // FindLastMatchingRecording that matches the given criteria.
@@ -621,7 +621,7 @@ func (archive *Archive) FindLastMatchingRecording(minRecordingID int64, sessionI
 		return aeron.NullValue, err
 	}
 
-	return archive.Control.PollForResponse(lastCorrelationID, archive.SessionID)
+	return archive.pollForResponse(lastCorrelationID, archive.SessionID)
 }
 
 // TODO: weird go semantic - should pass in consumer + return count
@@ -687,7 +687,7 @@ func (archive *Archive) DetachSegments(recordingID int64, newStartPosition int64
 		return err
 	}
 
-	_, err := archive.Control.PollForResponse(lastCorrelationID, archive.SessionID)
+	_, err := archive.pollForResponse(lastCorrelationID, archive.SessionID)
 	return err
 }
 
@@ -713,7 +713,7 @@ func (archive *Archive) DeleteDetachedSegments(recordingID int64) (int64, error)
 		return aeron.NullValue, err
 	}
 
-	return archive.Control.PollForResponse(lastCorrelationID, archive.SessionID)
+	return archive.pollForResponse(lastCorrelationID, archive.SessionID)
 }
 
 // PurgeSegments (detach and delete) to segments from the beginning of
@@ -742,7 +742,7 @@ func (archive *Archive) PurgeSegments(recordingID int64, newStartPosition int64)
 		return aeron.NullValue, err
 	}
 
-	return archive.Control.PollForResponse(lastCorrelationID, archive.SessionID)
+	return archive.pollForResponse(lastCorrelationID, archive.SessionID)
 }
 
 // AttachSegments to the beginning of a recording to restore history
@@ -770,7 +770,7 @@ func (archive *Archive) AttachSegments(recordingID int64) (int64, error) {
 		return aeron.NullValue, err
 	}
 
-	return archive.Control.PollForResponse(lastCorrelationID, archive.SessionID)
+	return archive.pollForResponse(lastCorrelationID, archive.SessionID)
 
 }
 
@@ -806,7 +806,7 @@ func (archive *Archive) MigrateSegments(recordingID int64, position int64) (int6
 		return aeron.NullValue, err
 	}
 
-	return archive.Control.PollForResponse(lastCorrelationID, archive.SessionID)
+	return archive.pollForResponse(lastCorrelationID, archive.SessionID)
 }
 
 // Replicate a recording from a source archive to a destination which
@@ -848,7 +848,7 @@ func (archive *Archive) Replicate(srcRecordingID int64, dstRecordingID int64, sr
 	if err := archive.handleProxyOffered(offered, offeredErr, "failed to send replicate request"); err != nil {
 		return aeron.NullValue, err
 	}
-	return archive.Control.PollForResponse(lastCorrelationID, archive.SessionID)
+	return archive.pollForResponse(lastCorrelationID, archive.SessionID)
 }
 
 // Replicate2 will replicate a recording from a source archive to a
@@ -893,7 +893,7 @@ func (archive *Archive) Replicate2(srcRecordingID int64, dstRecordingID int64, s
 		return aeron.NullValue, err
 	}
 
-	return archive.Control.PollForResponse(lastCorrelationID, archive.SessionID)
+	return archive.pollForResponse(lastCorrelationID, archive.SessionID)
 }
 
 // TaggedReplicate to replicate a recording from a source archive to a
@@ -939,7 +939,7 @@ func (archive *Archive) TaggedReplicate(srcRecordingID int64, dstRecordingID int
 		return 0, err
 	}
 
-	return archive.Control.PollForResponse(lastCorrelationID, archive.SessionID)
+	return archive.pollForResponse(lastCorrelationID, archive.SessionID)
 }
 
 // StopReplication of a replication request
@@ -964,7 +964,7 @@ func (archive *Archive) StopReplication(replicationID int64) (err error) {
 		return err
 	}
 
-	_, err = archive.Control.PollForResponse(lastCorrelationID, archive.SessionID)
+	_, err = archive.pollForResponse(lastCorrelationID, archive.SessionID)
 	return err
 }
 
@@ -992,7 +992,7 @@ func (archive *Archive) PurgeRecording(recordingID int64) (deletedSegmentCount i
 		return aeron.NullValue, err
 	}
 
-	return archive.Control.PollForResponse(lastCorrelationID, archive.SessionID)
+	return archive.pollForResponse(lastCorrelationID, archive.SessionID)
 }
 
 func (archive *Archive) handleProxyOffered(offered bool, offeredError error, offeredFailedMessage string) error {
@@ -1018,4 +1018,8 @@ func (archive *Archive) ensureNotReentrant() error {
 		return aeron.NewAeronError("reentrant calls not permitted during callbacks", aeron.AeronErrorCategory.ERROR)
 	}
 	return nil
+}
+
+func (archive *Archive) pollForResponse(correlationId int64, controlSessionId int64) (int64, error) {
+	return archive.Control.PollForResponse(correlationId, controlSessionId)
 }
